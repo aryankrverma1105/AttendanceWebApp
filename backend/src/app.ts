@@ -65,15 +65,27 @@ app.use(cookieParser());
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 
+import prisma from "./config/prisma";
+
 // ─── Health Check ────────────────────────────────────────────────────────────
-app.get("/api/health", (_req, res) => {
-  res
-    .status(200)
-    .json({
+app.get("/api/health", async (_req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.status(200).json({
       status: "ok",
+      database: "connected",
       timestamp: new Date().toISOString(),
       service: "Sologix Attendance API",
     });
+  } catch (err: any) {
+    res.status(503).json({
+      status: "degraded",
+      database: "disconnected",
+      error: err.message,
+      timestamp: new Date().toISOString(),
+      service: "Sologix Attendance API",
+    });
+  }
 });
 
 // ─── Public Routes (no auth required) ────────────────────────────────────────

@@ -1,0 +1,98 @@
+services:
+  # ─── PostgreSQL Database (Private network access only) ─────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: sologix-postgres
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-sologix_db}
+      POSTGRES_USER: ${POSTGRES_USER:-sologix_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_this_in_production}
+      TZ: Asia/Kolkata
+      PGTZ: Asia/Kolkata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - sologix_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sologix_user} -d ${POSTGRES_DB:-sologix_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── Sologix Attendance Backend API ──────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sologix-backend
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: 5000
+      NODE_ENV: production
+      TZ: Asia/Kolkata
+      DATABASE_URL: postgresql://${POSTGRES_USER:-sologix_user}:${POSTGRES_PASSWORD:-change_this_in_production}@postgres:5432/${POSTGRES_DB:-sologix_db}?schema=public
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-set_a_strong_jwt_access_secret}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-set_a_strong_jwt_refresh_secret}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://sologixenergy.com,http://localhost:3000}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      FIRST_ADMIN_EMAIL: ${FIRST_ADMIN_EMAIL:-admin@sologixenergy.com}
+      FIRST_ADMIN_PASSWORD: ${FIRST_ADMIN_PASSWORD:-Admin@123456}
+    networks:
+      - sologix_net
+
+  # ─── Sologix Admin Web Dashboard ─────────────────────────────────────────────
+  website:
+    build:
+      context: ./website
+      dockerfile: Dockerfile
+    container_name: sologix-website
+    restart: always
+    depends_on:
+      - backend
+    environment:
+      NODE_ENV: production
+      TZ: Asia/Kolkata
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api}
+    networks:
+      - sologix_net
+
+  # ─── Caddy Reverse Proxy & Automated HTTPS ───────────────────────────────────
+  caddy:
+    image: caddy:2-alpine
+    container_name: sologix-caddy
+    restart: always
+    depends_on:
+      - backend
+      - website
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+      ACME_EMAIL: ${ACME_EMAIL:-admin@sologixenergy.com}
+      TZ: Asia/Kolkata
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - sologix_net
+
+networks:
+  sologix_net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  caddy_data:
+    driver: local
+  caddy_config:
+    driver: local

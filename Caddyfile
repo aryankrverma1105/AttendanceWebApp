@@ -1,0 +1,37 @@
+{
+    email {$ACME_EMAIL:admin@sologixenergy.com}
+}
+
+{$DOMAIN:localhost} {
+    # Backend API and Socket.IO routing
+    handle /api/* {
+        reverse_proxy backend:5000 {
+            header_up Host {upstream_hostport}
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+
+    handle /socket.io/* {
+        reverse_proxy backend:5000 {
+            header_up Host {upstream_hostport}
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+
+    # Next.js Web Dashboard routing
+    handle {
+        reverse_proxy website:3000
+    }
+
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "SAMEORIGIN"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+}
