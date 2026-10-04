@@ -1,0 +1,64 @@
+{
+  "expo": {
+    "name": "Sologix Energy",
+    "slug": "sologix-energy",
+    "version": "1.0.0",
+    "description": "Sologix Energy - Powering Attendance with the Sun",
+    "owner": "aryan-kumar-verma",
+
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+
+    "experiments": {
+      "tsconfigPaths": true
+    },
+
+    "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash.png",
+          "backgroundColor": "#FFFBF0"
+        }
+      ],
+      "expo-secure-store",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Sologix Energy needs your location to automatically record attendance when you enter or exit an assigned site.",
+          "locationAlwaysPermission": "Sologix Energy needs always-on location to record attendance even when the app is in the background.",
+          "locationWhenInUsePermission": "Sologix Energy needs location access to show your proximity to assigned geofence sites.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true
+        }
+      ]
+    ],
+
+    "extra": {
+      "apiBase": "http://172.16.0.152:3000/api"
+    },
+
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+
+    "userInterfaceStyle": "light",
+
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.sologix.energy"
+    },
+    "android": {
+      "package": "com.sologix.energy",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FFFBF0"
+      },
+      "navigationBar": {
+        "backgroundColor": "#FFFBF0",
+        "barStyle": "dark-content"
+      }
+    }
+  }
+}

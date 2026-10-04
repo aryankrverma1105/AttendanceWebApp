@@ -1,0 +1,225 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  ADMIN
+  MANAGER
+  EMPLOYEE
+}
+
+model User {
+  id              Int      @id @default(autoincrement())
+  username        String   @unique
+  email           String   @unique
+  passwordHash    String
+  role            Role     @default(EMPLOYEE)
+  name            String?
+  photoUrl        String?
+  isActive        Boolean  @default(true)
+  isEmailVerified Boolean  @default(false)
+  bio             String?  @default("")
+
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+  emailVerificationTokens EmailVerificationToken[]
+  refreshTokens           RefreshTokens[]
+  employee                Employee?
+  notifications           Notification[]
+  auditLogs               AuditLog[]
+}
+
+model EmailVerificationToken {
+  id        String   @id @default(uuid())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  email     String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model RefreshTokens {
+  id          String    @id @default(uuid())
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId      Int
+  tokenHash   String    @unique
+  fingerprint String?
+  ip          String?
+  isRevoked   Boolean   @default(false)
+  revokedAt   DateTime?
+  expiresAt   DateTime
+  createdAt   DateTime  @default(now())
+}
+
+model Department {
+  id        String     @id @default(uuid())
+  name      String     @unique
+  employees Employee[]
+  createdAt DateTime   @default(now())
+}
+
+model Shift {
+  id                 String       @id @default(uuid())
+  name               String
+  startTime          String       // e.g. "09:00"
+  endTime            String       // e.g. "18:00" (supports crossing midnight like 22:00 -> 06:00)
+  timezone           String       @default("Asia/Kolkata")
+  gracePeriodMinutes Int          @default(15)
+  overtimePolicy     String       @default("STANDARD")
+  active             Boolean      @default(true)
+  employees          Employee[]
+  attendances        Attendance[]
+  createdAt          DateTime     @default(now())
+}
+
+model Employee {
+  id                  String              @id @default(uuid())
+  userId              Int                 @unique
+  user                User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  employeeCode        String              @unique
+  phone               String?
+  departmentId        String?
+  department          Department?         @relation(fields: [departmentId], references: [id])
+  managerId           String?
+  manager             Employee?           @relation("ManagerSubordinates", fields: [managerId], references: [id])
+  subordinates        Employee[]          @relation("ManagerSubordinates")
+  defaultShiftId      String?
+  defaultShift        Shift?              @relation(fields: [defaultShiftId], references: [id])
+  employmentStatus    String              @default("ACTIVE")
+  currentStatus       String              @default("NOT_STARTED") // WORKING, AWAY, REMOTE_WORKING, ON_LEAVE, OVERTIME, SHIFT_COMPLETED
+  lastLatitude        Float?
+  lastLongitude       Float?
+  lastLocationUpdate  DateTime?
+  punctualityScore    Float               @default(100.0)
+  geofenceAssignments EmployeeGeofence[]
+  attendances         Attendance[]
+  locationUpdates     LocationUpdate[]
+  geofenceEvents      GeofenceEvent[]
+  leaveRequests       LeaveRequest[]
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+}
+
+model Geofence {
+  id                  String             @id @default(uuid())
+  name                String
+  type                String             @default("OFFICE") // OFFICE, FIELD_SITE, CUSTOMER_SITE, REMOTE, OTHER
+  latitude            Float
+  longitude           Float
+  radiusMeters        Float              @default(200.0)
+  address             String?
+  active              Boolean            @default(true)
+  employeeAssignments EmployeeGeofence[]
+  geofenceEvents      GeofenceEvent[]
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+}
+
+model EmployeeGeofence {
+  id         String    @id @default(uuid())
+  employeeId String
+  employee   Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  geofenceId String
+  geofence   Geofence  @relation(fields: [geofenceId], references: [id], onDelete: Cascade)
+  validFrom  DateTime?
+  validUntil DateTime?
+  priority   Int       @default(1)
+  createdAt  DateTime  @default(now())
+
+  @@unique([employeeId, geofenceId])
+}
+
+model Attendance {
+  id               String    @id @default(uuid())
+  employeeId       String
+  employee         Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  shiftId          String?
+  shift            Shift?    @relation(fields: [shiftId], references: [id])
+  workDate         String    // YYYY-MM-DD
+  checkInAt        DateTime?
+  checkOutAt       DateTime?
+  status           String    @default("WORKING") // WORKING, AWAY, REMOTE_WORKING, OVERTIME, SHIFT_COMPLETED
+  workingMinutes   Int       @default(0)
+  breakMinutes     Int       @default(0)
+  overtimeMinutes  Int       @default(0)
+  isLateArrival    Boolean   @default(false)
+  isEarlyDeparture Boolean   @default(false)
+  notes            String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([employeeId, workDate])
+}
+
+model LocationUpdate {
+  id             String    @id @default(uuid())
+  employeeId     String
+  employee       Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  latitude       Float
+  longitude      Float
+  accuracyMeters Float?
+  speed          Float?
+  heading        Float?
+  isMock         Boolean   @default(false)
+  isAnomaly      Boolean   @default(false)
+  recordedAt     DateTime
+  receivedAt     DateTime  @default(now())
+}
+
+model GeofenceEvent {
+  id             String    @id @default(uuid())
+  employeeId     String
+  employee       Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  geofenceId     String?
+  geofence       Geofence? @relation(fields: [geofenceId], references: [id])
+  eventType      String    // ENTER, EXIT, DWELL, CHECK_IN, CHECK_OUT, GEOFENCE_BREACH
+  latitude       Float?
+  longitude      Float?
+  accuracyMeters Float?
+  occurredAt     DateTime  @default(now())
+}
+
+model LeaveRequest {
+  id         String   @id @default(uuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  startDate  String   // YYYY-MM-DD
+  endDate    String   // YYYY-MM-DD
+  leaveType  String   @default("CASUAL") // SICK, CASUAL, ANNUAL, REMOTE_WORK
+  status     String   @default("PENDING") // PENDING, APPROVED, REJECTED, CANCELLED
+  approvedBy String?
+  reason     String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model Notification {
+  id              String    @id @default(uuid())
+  recipientUserId Int
+  recipient       User      @relation(fields: [recipientUserId], references: [id], onDelete: Cascade)
+  type            String    // CHECK_IN, CHECK_OUT, LATE_ARRIVAL, GEOFENCE_EXIT, OVERTIME, BREACH, LEAVE
+  title           String
+  message         String
+  readAt          DateTime?
+  createdAt       DateTime  @default(now())
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  actorUserId Int?
+  actor       User?    @relation(fields: [actorUserId], references: [id])
+  action      String
+  entityType  String
+  entityId    String?
+  metadata    String?  // JSON string
+  createdAt   DateTime @default(now())
+}
