@@ -6,7 +6,7 @@ const shiftRouter = Router();
 
 // All routes protected by `authorized` in app.ts
 shiftRouter.get("/", getShifts);
-shiftRouter.post("/", requireRole("ADMIN", "MANAGER"), createShift);
-shiftRouter.patch("/:id", requireRole("ADMIN", "MANAGER"), updateShift);
+shiftRouter.post("/", requireRole("ADMIN"), createShift);
+shiftRouter.patch("/:id", requireRole("ADMIN"), updateShift);
 
 export default shiftRouter;

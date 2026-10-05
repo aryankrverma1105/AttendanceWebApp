@@ -1,16 +1,461 @@
 import type { Request, Response } from "express";
 import prisma from "../config/prisma";
 import { getTodayDateString, calculateLiveWorkingMinutes } from "../services/attendance.service";
+import { getWorkDateIST, calculateWorkingMinutes, getISTTimeParts } from "../utils/time.utils";
+import { broadcastEvent } from "../services/socket.service";
+import { evaluateAssignedGeofences, isValidCoordinate } from "../services/geofence.service";
+
+async function notifyAdminsOfMock(employeeName: string, eventType: string, coords: { lat?: number; lng?: number }) {
+  try {
+    const admins = await prisma.user.findMany({ where: { role: "ADMIN" } });
+    for (const admin of admins) {
+      await prisma.notification.create({
+        data: {
+          recipientUserId: admin.id,
+          type: "ANOMALY",
+          title: "Mock Location Detected",
+          message: `User ${employeeName} submitted a mock/spoofed GPS location during ${eventType} (${coords.lat ?? "N/A"}, ${coords.lng ?? "N/A"}).`,
+        },
+      });
+    }
+    broadcastEvent("anomaly.detected", {
+      employeeName,
+      reason: "MOCK_LOCATION",
+      eventType,
+      coordinates: coords,
+    });
+  } catch (err) {
+    console.error("[Attendance] Failed to notify admins of mock location:", err);
+  }
+}
+
+export async function checkIn(req: Request, res: Response) {
+  try {
+    const authRole = ((req as any).user?.role || "").toUpperCase();
+    const userId = (req as any).user?.userId;
+
+    if (authRole === "ADMIN") {
+      return res.status(403).json({
+        success: false,
+        message: "ADMIN accounts must never have attendance, tracking or check-in",
+      });
+    }
+
+    const { latitude, longitude, accuracy, isMock, clientEventId, clientTimestamp } = req.body;
+
+    if (!clientEventId) {
+      return res.status(400).json({ success: false, message: "clientEventId (UUID) is required" });
+    }
+
+    const employee = await prisma.employee.findUnique({
+      where: { userId: Number(userId) },
+      include: {
+        user: true,
+        defaultShift: true,
+        geofenceAssignments: { include: { geofence: true } },
+      },
+    });
+
+    if (!employee) {
+      return res.status(404).json({ success: false, message: "Employee profile not found" });
+    }
+
+    const checkInTime = clientTimestamp ? new Date(clientTimestamp) : new Date();
+    const workDate = getWorkDateIST(checkInTime);
+
+    // 1. Idempotency check on ProcessedClientEvent
+    const alreadyProcessed = await prisma.processedClientEvent.findUnique({
+      where: { clientEventId },
+    });
+
+    if (alreadyProcessed) {
+      const existing = await prisma.attendance.findUnique({
+        where: {
+          employeeId_workDate: {
+            employeeId: employee.id,
+            workDate,
+          },
+        },
+      });
+      return res.status(200).json({
+        success: true,
+        message: "Event already processed",
+        data: existing,
+        duplicate: true,
+      });
+    }
+
+    // 2. Check if already checked in today
+    const existingAttendance = await prisma.attendance.findUnique({
+      where: {
+        employeeId_workDate: {
+          employeeId: employee.id,
+          workDate,
+        },
+      },
+    });
+
+    if (existingAttendance && existingAttendance.status === "WORKING" && !existingAttendance.checkOutAt) {
+      // Record clientEventId so future retries are also idempotent
+      await prisma.processedClientEvent.create({
+        data: {
+          clientEventId,
+          eventType: "CHECK_IN",
+          employeeId: employee.id,
+        },
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: "Already checked in",
+        data: existingAttendance,
+        alreadyCheckedIn: true,
+      });
+    }
+
+    // 3. Mock location flag & admin notification
+    const lat = latitude !== undefined && latitude !== null ? Number(latitude) : undefined;
+    const lng = longitude !== undefined && longitude !== null ? Number(longitude) : undefined;
+    const isMockBool = Boolean(isMock);
+
+    if (isMockBool) {
+      await notifyAdminsOfMock(employee.user.name || employee.employeeCode, "CHECK_IN", { lat, lng });
+    }
+
+    // 4. Geofence evaluation (optional indicator, never blocks check-in)
+    let insideGeofence = false;
+    let matchedGeofenceName: string | undefined;
+
+    if (lat !== undefined && lng !== undefined && isValidCoordinate(lat, lng)) {
+      const assignedGeofences = (employee.geofenceAssignments || [])
+        .filter((a: any) => a.geofence?.active)
+        .map((a: any) => ({
+          id: a.geofence.id,
+          name: a.geofence.name,
+          type: a.geofence.type,
+          latitude: a.geofence.latitude,
+          longitude: a.geofence.longitude,
+          radiusMeters: a.geofence.radiusMeters,
+        }));
+
+      if (assignedGeofences.length > 0) {
+        const evalResult = evaluateAssignedGeofences(
+          { latitude: lat, longitude: lng, accuracy: accuracy ? Number(accuracy) : undefined },
+          assignedGeofences
+        );
+        insideGeofence = evalResult.result === "INSIDE";
+        matchedGeofenceName = evalResult.geofenceName;
+      }
+    }
+
+    // 5. Shift & Late arrival calculation
+    const shift = employee.defaultShift || (await prisma.shift.findFirst());
+    let isLate = false;
+    if (shift) {
+      const [sh, sm] = shift.startTime.split(":").map(Number);
+      const istParts = getISTTimeParts(checkInTime);
+      const checkInMinutes = istParts.hour * 60 + istParts.minute;
+      const expectedMinutes = sh * 60 + sm + (shift.gracePeriodMinutes || 15);
+      isLate = checkInMinutes > expectedMinutes;
+    }
+
+    // 6. Upsert Attendance record
+    const attendance = await prisma.attendance.upsert({
+      where: {
+        employeeId_workDate: {
+          employeeId: employee.id,
+          workDate,
+        },
+      },
+      create: {
+        employeeId: employee.id,
+        shiftId: shift?.id,
+        workDate,
+        checkInAt: checkInTime,
+        checkInLat: lat,
+        checkInLng: lng,
+        status: "WORKING",
+        isLateArrival: isLate,
+        workingMinutes: 0,
+        breakMinutes: 0,
+      },
+      update: {
+        checkInAt: existingAttendance?.checkInAt || checkInTime,
+        checkInLat: existingAttendance?.checkInLat ?? lat,
+        checkInLng: existingAttendance?.checkInLng ?? lng,
+        checkOutAt: null,
+        checkOutType: null,
+        status: "WORKING",
+      },
+    });
+
+    // 7. Update Employee status & last coordinates
+    await prisma.employee.update({
+      where: { id: employee.id },
+      data: {
+        currentStatus: "WORKING",
+        isLocationOff: false,
+        ...(lat !== undefined && lng !== undefined
+          ? {
+              lastLatitude: lat,
+              lastLongitude: lng,
+              lastLocationUpdate: checkInTime,
+            }
+          : {}),
+      },
+    });
+
+    // 8. Record ProcessedClientEvent
+    await prisma.processedClientEvent.create({
+      data: {
+        clientEventId,
+        eventType: "CHECK_IN",
+        employeeId: employee.id,
+      },
+    });
+
+    // 9. Broadcast socket events
+    const empName = employee.user.name || employee.user.username;
+    broadcastEvent("attendance.checked_in", {
+      employeeId: employee.id,
+      employeeName: empName,
+      checkInAt: checkInTime.toISOString(),
+      workDate,
+      status: "WORKING",
+      isLateArrival: isLate,
+      insideGeofence,
+      geofenceName: matchedGeofenceName,
+      isMock: isMockBool,
+    });
+    broadcastEvent("employee.status.changed", {
+      employeeId: employee.id,
+      employeeName: empName,
+      status: "WORKING",
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Checked in successfully",
+      data: attendance,
+      insideGeofence,
+      isLateArrival: isLate,
+    });
+  } catch (error: any) {
+    console.error("[Attendance] check-in error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+}
+
+export async function checkOut(req: Request, res: Response) {
+  try {
+    const authRole = ((req as any).user?.role || "").toUpperCase();
+    const userId = (req as any).user?.userId;
+
+    if (authRole === "ADMIN") {
+      return res.status(403).json({
+        success: false,
+        message: "ADMIN accounts must never have attendance, tracking or check-in",
+      });
+    }
+
+    const { latitude, longitude, accuracy, isMock, clientEventId, clientTimestamp } = req.body;
+
+    if (!clientEventId) {
+      return res.status(400).json({ success: false, message: "clientEventId (UUID) is required" });
+    }
+
+    const employee = await prisma.employee.findUnique({
+      where: { userId: Number(userId) },
+      include: {
+        user: true,
+        defaultShift: true,
+      },
+    });
+
+    if (!employee) {
+      return res.status(404).json({ success: false, message: "Employee profile not found" });
+    }
+
+    const checkOutTime = clientTimestamp ? new Date(clientTimestamp) : new Date();
+    const workDate = getWorkDateIST(checkOutTime);
+
+    // 1. Idempotency check on ProcessedClientEvent
+    const alreadyProcessed = await prisma.processedClientEvent.findUnique({
+      where: { clientEventId },
+    });
+
+    if (alreadyProcessed) {
+      const existing = await prisma.attendance.findUnique({
+        where: {
+          employeeId_workDate: {
+            employeeId: employee.id,
+            workDate,
+          },
+        },
+      });
+      return res.status(200).json({
+        success: true,
+        message: "Event already processed",
+        data: existing,
+        duplicate: true,
+      });
+    }
+
+    // 2. Fetch today's attendance record (or fallback to latest open record)
+    let attendance = await prisma.attendance.findUnique({
+      where: {
+        employeeId_workDate: {
+          employeeId: employee.id,
+          workDate,
+        },
+      },
+    });
+
+    if (!attendance) {
+      // Check if there is an unclosed session from an earlier shift
+      attendance = await prisma.attendance.findFirst({
+        where: {
+          employeeId: employee.id,
+          checkOutAt: null,
+          checkInAt: { not: null },
+        },
+        orderBy: { workDate: "desc" },
+      });
+    }
+
+    if (!attendance || !attendance.checkInAt) {
+      return res.status(400).json({
+        success: false,
+        message: "No active check-in found for today",
+      });
+    }
+
+    if (attendance.checkOutAt && attendance.status !== "WORKING") {
+      // Already checked out
+      await prisma.processedClientEvent.create({
+        data: {
+          clientEventId,
+          eventType: "CHECK_OUT",
+          employeeId: employee.id,
+        },
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: "Already checked out",
+        data: attendance,
+        alreadyCheckedOut: true,
+      });
+    }
+
+    // 3. Mock location flag & admin notification
+    const lat = latitude !== undefined && latitude !== null ? Number(latitude) : undefined;
+    const lng = longitude !== undefined && longitude !== null ? Number(longitude) : undefined;
+    const isMockBool = Boolean(isMock);
+
+    if (isMockBool) {
+      await notifyAdminsOfMock(employee.user.name || employee.employeeCode, "CHECK_OUT", { lat, lng });
+    }
+
+    // 4. Calculate working minutes & shift early/overtime
+    const workingMinutes = calculateWorkingMinutes(
+      attendance.checkInAt,
+      checkOutTime,
+      attendance.breakMinutes || 0
+    );
+
+    const shift = employee.defaultShift || (await prisma.shift.findFirst());
+    let isEarly = false;
+    let overtimeMinutes = 0;
+
+    if (shift) {
+      const [eh, em] = shift.endTime.split(":").map(Number);
+      const istParts = getISTTimeParts(checkOutTime);
+      const checkOutMinutes = istParts.hour * 60 + istParts.minute;
+      const shiftEndMinutes = eh * 60 + em;
+
+      if (checkOutMinutes < shiftEndMinutes) {
+        isEarly = true;
+      } else if (checkOutMinutes > shiftEndMinutes + 15) {
+        overtimeMinutes = checkOutMinutes - shiftEndMinutes;
+      }
+    }
+
+    // 5. Update Attendance
+    const updatedAttendance = await prisma.attendance.update({
+      where: { id: attendance.id },
+      data: {
+        checkOutAt: checkOutTime,
+        checkOutLat: lat,
+        checkOutLng: lng,
+        checkOutType: "MANUAL",
+        status: "SHIFT_COMPLETED",
+        workingMinutes,
+        overtimeMinutes,
+        isEarlyDeparture: isEarly,
+      },
+    });
+
+    // 6. Update Employee status
+    await prisma.employee.update({
+      where: { id: employee.id },
+      data: {
+        currentStatus: "SHIFT_COMPLETED",
+        ...(lat !== undefined && lng !== undefined
+          ? {
+              lastLatitude: lat,
+              lastLongitude: lng,
+              lastLocationUpdate: checkOutTime,
+            }
+          : {}),
+      },
+    });
+
+    // 7. Record ProcessedClientEvent
+    await prisma.processedClientEvent.create({
+      data: {
+        clientEventId,
+        eventType: "CHECK_OUT",
+        employeeId: employee.id,
+      },
+    });
+
+    // 8. Broadcast socket events
+    const empName = employee.user.name || employee.user.username;
+    broadcastEvent("attendance.checked_out", {
+      employeeId: employee.id,
+      employeeName: empName,
+      checkOutAt: checkOutTime.toISOString(),
+      workDate: attendance.workDate,
+      status: "SHIFT_COMPLETED",
+      workingMinutes,
+      checkOutType: "MANUAL",
+      isMock: isMockBool,
+    });
+    broadcastEvent("employee.status.changed", {
+      employeeId: employee.id,
+      employeeName: empName,
+      status: "SHIFT_COMPLETED",
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Checked out successfully",
+      data: updatedAttendance,
+    });
+  } catch (error: any) {
+    console.error("[Attendance] check-out error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+}
 
 export async function getAttendanceRecords(req: Request, res: Response) {
   try {
     const { employeeId, date, status } = req.query;
 
-    // A plain EMPLOYEE can only ever see their own attendance — the employeeId filter is
-    // theirs alone, never client-chosen, or they could page through every coworker's data.
     const authRole = ((req as any).user?.role || "").toUpperCase();
     const authEmployeeId = (req as any).user?.employeeId;
-    const isPrivileged = authRole === "ADMIN" || authRole === "MANAGER";
+    const isPrivileged = authRole === "ADMIN";
 
     const where: any = {};
     if (isPrivileged) {

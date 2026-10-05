@@ -1,18 +1,19 @@
 import type { Request, Response } from "express";
 import prisma from "../config/prisma";
 import { processLocationUpdate, processBatchLocations, resolveEmployee } from "../services/location.service";
+import { broadcastEvent } from "../services/socket.service";
 
 /**
  * A caller's own employeeId (from their token) always wins over any employeeId in the
  * request body — otherwise any authenticated employee could submit fake GPS/attendance
- * data for a coworker just by naming their id. Only ADMIN/MANAGER may target another
+ * data for a coworker just by naming their id. Only ADMIN may target another
  * employee explicitly (e.g. internal tooling), and only when their own token has no
  * employeeId of its own.
  */
 function resolveTargetEmployeeId(req: Request, bodyEmployeeId?: string): string | undefined {
   const authRole = ((req as any).user?.role || "").toUpperCase();
   const authEmployeeId = (req as any).user?.employeeId;
-  const isPrivileged = authRole === "ADMIN" || authRole === "MANAGER";
+  const isPrivileged = authRole === "ADMIN";
   return authEmployeeId || (isPrivileged ? bodyEmployeeId : undefined);
 }
 
@@ -77,7 +78,7 @@ export async function getLocationHistory(req: Request, res: Response) {
     const id = req.params["id"] as string;
     const authRole = ((req as any).user?.role || "").toUpperCase();
     const authEmployeeId = (req as any).user?.employeeId;
-    const isPrivileged = authRole === "ADMIN" || authRole === "MANAGER";
+    const isPrivileged = authRole === "ADMIN";
     if (!isPrivileged && id !== authEmployeeId) {
       return res.status(403).json({ success: false, message: "Forbidden: you can only view your own location history" });
     }
@@ -93,66 +94,94 @@ export async function getLocationHistory(req: Request, res: Response) {
   }
 }
 
-/**
- * Simulator endpoint: allows immediate trigger of demo events:
- * Action: 'enter_site' | 'leave_site' | 'return_site' | 'overtime'
- */
-export async function simulateEmployeeMovement(req: Request, res: Response) {
+export async function reportLocationStatus(req: Request, res: Response) {
   try {
-    const { employeeId, action = "enter_site" } = req.body;
+    const authRole = ((req as any).user?.role || "").toUpperCase();
     const authUserId = (req as any).user?.userId;
 
-    const employee = await resolveEmployee(employeeId, authUserId);
+    if (authRole === "ADMIN") {
+      return res.status(400).json({ success: false, message: "ADMIN accounts do not report location status" });
+    }
 
+    const { state, at, clientEventId } = req.body;
+    if (!state || !["LOCATION_OFF", "PERMISSION_REVOKED", "LOCATION_ON"].includes(state)) {
+      return res.status(400).json({
+        success: false,
+        message: "state must be one of: LOCATION_OFF, PERMISSION_REVOKED, LOCATION_ON",
+      });
+    }
+
+    const employee = await resolveEmployee(undefined, authUserId);
     if (!employee) {
-      return res.status(404).json({ success: false, message: "Employee not found" });
+      return res.status(404).json({ success: false, message: "Employee profile not found" });
     }
 
-    let targetGeofence = employee.geofenceAssignments?.[0]?.geofence;
-    if (!targetGeofence) {
-      targetGeofence = await prisma.geofence.findFirst({ where: { active: true } });
+    // Check idempotency with clientEventId
+    if (clientEventId) {
+      const existing = await prisma.locationStatusEvent.findUnique({
+        where: { clientEventId },
+      });
+      if (existing) {
+        return res.status(200).json({ success: true, message: "Event already recorded", duplicate: true });
+      }
     }
 
-    if (!targetGeofence) {
-      return res.status(400).json({ success: false, message: "No active geofence available for simulation" });
-    }
+    const eventTime = at ? new Date(at) : new Date();
 
-    let lat: number;
-    let lng: number;
-
-    if (action === "enter_site" || action === "return_site") {
-      // Coordinate right in the middle of assigned geofence
-      lat = targetGeofence.latitude + 0.0001;
-      lng = targetGeofence.longitude + 0.0001;
-    } else {
-      // Coordinate 1 km outside of assigned geofence
-      lat = targetGeofence.latitude + 0.015;
-      lng = targetGeofence.longitude + 0.015;
-    }
-
-    // Send 2 consecutive samples to satisfy state machine confirmation windows
-    const res1 = await processLocationUpdate(employee.id, {
-      latitude: lat,
-      longitude: lng,
-      accuracy: 10,
-      recordedAt: new Date(),
-    }, employee.userId);
-
-    const res2 = await processLocationUpdate(employee.id, {
-      latitude: lat + 0.00005,
-      longitude: lng + 0.00005,
-      accuracy: 12,
-      recordedAt: new Date(Date.now() + 1000),
-    }, employee.userId);
-
-    return res.status(200).json({
-      success: true,
-      action,
-      employee: employee.employeeCode,
-      geofence: targetGeofence.name,
-      finalState: res2.state,
+    await prisma.locationStatusEvent.create({
+      data: {
+        employeeId: employee.id,
+        state,
+        at: eventTime,
+        clientEventId,
+      },
     });
+
+    const isOff = state === "LOCATION_OFF" || state === "PERMISSION_REVOKED";
+
+    await prisma.employee.update({
+      where: { id: employee.id },
+      data: { isLocationOff: isOff },
+    });
+
+    const empName = employee.user.name || employee.user.username;
+
+    if (isOff) {
+      // Notify all admins and broadcast event
+      try {
+        const admins = await prisma.user.findMany({ where: { role: "ADMIN" } });
+        for (const admin of admins) {
+          await prisma.notification.create({
+            data: {
+              recipientUserId: admin.id,
+              type: "LOCATION_OFF",
+              title: "Employee Location Off",
+              message: `${empName} reported ${state === "PERMISSION_REVOKED" ? "location permissions revoked" : "location services turned OFF"} at ${eventTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`,
+            },
+          });
+        }
+      } catch (err) {
+        console.error("[Location] Failed to notify admins of location off:", err);
+      }
+
+      broadcastEvent("employee.location.off", {
+        employeeId: employee.id,
+        employeeName: empName,
+        state,
+        at: eventTime.toISOString(),
+      });
+    } else {
+      broadcastEvent("employee.location.on", {
+        employeeId: employee.id,
+        employeeName: empName,
+        state,
+        at: eventTime.toISOString(),
+      });
+    }
+
+    return res.status(200).json({ success: true, message: "Location status updated", state });
   } catch (error: any) {
+    console.error("[Location] reportLocationStatus error:", error);
     return res.status(500).json({ success: false, message: error.message });
   }
 }

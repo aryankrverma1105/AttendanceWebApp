@@ -47,11 +47,6 @@ export default function LoginScreen({ onLogin }: LoginScreenProps) {
     }
   };
 
-  const fillQuick = (e: string, p: string) => {
-    setEmail(e);
-    setPassword(p);
-    setError(null);
-  };
 
   return (
     <KeyboardAvoidingView
@@ -138,38 +133,6 @@ export default function LoginScreen({ onLogin }: LoginScreenProps) {
             Sign In to Sologix
           </Button>
         </Card>
-
-        {/* Demo Fast Fill Section */}
-        <View className="mt-8 gap-2">
-          <Text className="text-center text-[12px] font-semibold uppercase tracking-wider text-[#6B7280]">
-            Quick Fill Demo Credentials
-          </Text>
-          <View className="flex-row flex-wrap justify-center gap-2">
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={() => fillQuick('admin@gmail.com', 'Sampathsagar@255308')}
-              className="flex-row items-center gap-1.5 rounded-xl border border-[#F3E8C8] bg-white px-3 py-2">
-              <Ionicons name="shield" size={14} color="#D97706" />
-              <Text className="text-[13px] font-semibold text-[#1F2937]">Admin</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={() => fillQuick('manager@example.com', 'Password123!')}
-              className="flex-row items-center gap-1.5 rounded-xl border border-[#F3E8C8] bg-white px-3 py-2">
-              <Ionicons name="people" size={14} color="#0EA5E9" />
-              <Text className="text-[13px] font-semibold text-[#1F2937]">Manager</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={() => fillQuick('rahul@example.com', 'Password123!')}
-              className="flex-row items-center gap-1.5 rounded-xl border border-[#F3E8C8] bg-white px-3 py-2">
-              <Ionicons name="person" size={14} color="#16A34A" />
-              <Text className="text-[13px] font-semibold text-[#1F2937]">Employee</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
 
         {/* Bottom Credit */}
         <View className="mt-8 items-center">

@@ -16,6 +16,21 @@ import { getMobileSocket } from "../lib/socket";
 import { Card } from "../components/ui/card";
 import { Badge, type BadgeVariant } from "../components/ui/badge";
 import { BrandLogo } from "../components/ui/BrandLogo";
+import {
+  queuePendingEvent,
+  setStoredAttendanceState,
+  generateUUID,
+  getOutboxStatus,
+} from "../lib/outbox";
+import { triggerSync } from "../lib/sync";
+import {
+  startForegroundTracking,
+  startBackgroundTracking,
+  stopBackgroundTracking,
+  getCurrentPosition,
+} from "../lib/location";
+import { evaluateLocationStatus } from "../lib/locationWatchdog";
+import { LocationOffBanner } from "../components/LocationOffBanner";
 
 function formatDuration(minutes: number) {
   if (!minutes) return "—";
@@ -183,17 +198,36 @@ export default function AttendanceScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [isCheckedIn, setIsCheckedIn] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [offlinePendingState, setOfflinePendingState] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
+      const outbox = await getOutboxStatus();
+      if (outbox.pendingEvents > 0) {
+        setOfflinePendingState("Saved, waiting to upload");
+      } else {
+        setOfflinePendingState(null);
+      }
+
       const raw = await SecureStore.getItemAsync("sologix_user");
       const user = raw ? JSON.parse(raw) : null;
       if (!user?.employeeId) return;
+
       const res = await mobileApi.getMyAttendance(user.employeeId);
       if (res.success) {
         setRecords(res.data ?? []);
         const latest = (res.data ?? [])[0];
-        setIsCheckedIn(latest?.status === "WORKING" && !latest?.checkOutAt);
+        const serverCheckedIn = latest?.status === "WORKING" && !latest?.checkOutAt;
+        
+        // If outbox has local override, respect it
+        if (outbox.lastCheckInState === "CHECKED_IN") {
+          setIsCheckedIn(true);
+        } else if (outbox.lastCheckInState === "CHECKED_OUT") {
+          setIsCheckedIn(false);
+        } else {
+          setIsCheckedIn(serverCheckedIn);
+        }
       }
     } catch (e) {
       console.error("Attendance load:", e);
@@ -234,6 +268,87 @@ export default function AttendanceScreen() {
     };
   }, [load]);
 
+  const handleCheckIn = async () => {
+    if (isCheckedIn || isSubmitting) return;
+    setIsSubmitting(true);
+
+    try {
+      const clientEventId = generateUUID();
+      const clientTimestamp = new Date().toISOString();
+      const pos = await getCurrentPosition().catch(() => null);
+
+      await queuePendingEvent({
+        id: clientEventId,
+        eventType: "CHECK_IN",
+        payload: {
+          latitude: pos?.latitude,
+          longitude: pos?.longitude,
+          accuracy: pos?.accuracy,
+          isMock: pos?.mocked,
+          clientEventId,
+          clientTimestamp,
+        },
+      });
+
+      await setStoredAttendanceState("CHECKED_IN");
+      setIsCheckedIn(true);
+      setOfflinePendingState("Saved, waiting to upload");
+
+      // Start background tracking
+      await startForegroundTracking();
+      await startBackgroundTracking();
+
+      // Trigger sync
+      triggerSync().catch(() => {});
+      evaluateLocationStatus(true).catch(() => {});
+    } catch (err: any) {
+      console.error("[Attendance] Check in error:", err);
+    } finally {
+      setIsSubmitting(false);
+      load();
+    }
+  };
+
+  const handleCheckOut = async () => {
+    if (!isCheckedIn || isSubmitting) return;
+    setIsSubmitting(true);
+
+    try {
+      const clientEventId = generateUUID();
+      const clientTimestamp = new Date().toISOString();
+      const pos = await getCurrentPosition().catch(() => null);
+
+      await queuePendingEvent({
+        id: clientEventId,
+        eventType: "CHECK_OUT",
+        payload: {
+          latitude: pos?.latitude,
+          longitude: pos?.longitude,
+          accuracy: pos?.accuracy,
+          isMock: pos?.mocked,
+          clientEventId,
+          clientTimestamp,
+        },
+      });
+
+      await setStoredAttendanceState("CHECKED_OUT");
+      setIsCheckedIn(false);
+      setOfflinePendingState("Saved, waiting to upload");
+
+      // Stop tracking
+      await stopBackgroundTracking();
+
+      // Trigger sync
+      triggerSync().catch(() => {});
+      evaluateLocationStatus(false).catch(() => {});
+    } catch (err: any) {
+      console.error("[Attendance] Check out error:", err);
+    } finally {
+      setIsSubmitting(false);
+      load();
+    }
+  };
+
   if (loading) {
     return (
       <View className="flex-1 items-center justify-center bg-[#FFFBF0]">
@@ -244,6 +359,9 @@ export default function AttendanceScreen() {
 
   return (
     <View className="flex-1 bg-[#FFFBF0]">
+      {/* Location-Off / Permission Revoked Red Banner */}
+      <LocationOffBanner />
+
       {/* Sunny Gradient Header */}
       <View className="p-4 pt-4 pb-2">
         <LinearGradient
@@ -277,32 +395,68 @@ export default function AttendanceScreen() {
       {/* Manual Check In / Check Out Card with big round buttons */}
       <View className="px-4 pb-2">
         <Card className="items-center p-4 border-[#F3E8C8] bg-white">
-          <Text className="text-[13px] font-bold uppercase text-[#6B7280] tracking-wider mb-2">
-            Duty Status: {isCheckedIn ? "Checked In" : "Checked Out"}
-          </Text>
-          <View className="flex-row items-center justify-center gap-6 my-1">
+          <View className="flex-row items-center justify-between w-full mb-3 px-1">
+            <Text className="text-[13px] font-bold uppercase text-[#6B7280] tracking-wider">
+              Duty Status:{" "}
+              <Text className={isCheckedIn ? "text-[#16A34A]" : "text-[#6B7280]"}>
+                {isCheckedIn ? "Checked In" : "Checked Out"}
+              </Text>
+            </Text>
+
+            {offlinePendingState && (
+              <Badge variant="warning">
+                <Text className="text-[11px] font-semibold">{offlinePendingState}</Text>
+              </Badge>
+            )}
+          </View>
+
+          <View className="flex-row items-center justify-center gap-8 my-2">
             {/* Big Round Amber Check In Button */}
             <TouchableOpacity
+              onPress={handleCheckIn}
+              disabled={isCheckedIn || isSubmitting}
               activeOpacity={0.8}
+              style={{ opacity: isCheckedIn || isSubmitting ? 0.35 : 1.0 }}
               className="w-24 h-24 rounded-full bg-[#F59E0B] items-center justify-center border-4 border-[#FEF3C7] shadow-solar"
             >
-              <Ionicons name="log-in-outline" size={30} color="#1F2937" />
-              <Text className="text-[13px] font-extrabold text-[#1F2937] mt-0.5">
-                Check In
-              </Text>
+              {isSubmitting && !isCheckedIn ? (
+                <ActivityIndicator color="#1F2937" />
+              ) : (
+                <>
+                  <Ionicons name="log-in-outline" size={30} color="#1F2937" />
+                  <Text className="text-[13px] font-extrabold text-[#1F2937] mt-0.5">
+                    Check In
+                  </Text>
+                </>
+              )}
             </TouchableOpacity>
 
             {/* Deep Blue Check Out Button */}
             <TouchableOpacity
+              onPress={handleCheckOut}
+              disabled={!isCheckedIn || isSubmitting}
               activeOpacity={0.8}
+              style={{ opacity: !isCheckedIn || isSubmitting ? 0.35 : 1.0 }}
               className="w-24 h-24 rounded-full bg-[#0369A1] items-center justify-center border-4 border-[#E0F2FE] shadow-warm"
             >
-              <Ionicons name="log-out-outline" size={30} color="#FFFFFF" />
-              <Text className="text-[13px] font-extrabold text-white mt-0.5">
-                Check Out
-              </Text>
+              {isSubmitting && isCheckedIn ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <>
+                  <Ionicons name="log-out-outline" size={30} color="#FFFFFF" />
+                  <Text className="text-[13px] font-extrabold text-white mt-0.5">
+                    Check Out
+                  </Text>
+                </>
+              )}
             </TouchableOpacity>
           </View>
+
+          <Text className="text-[11px] text-[#9CA3AF] text-center mt-2">
+            {isCheckedIn
+              ? "Duty active. Background location tracking is running."
+              : "Tap Check In to begin duty session and enable GPS verification."}
+          </Text>
         </Card>
       </View>
 

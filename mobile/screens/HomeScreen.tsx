@@ -23,6 +23,11 @@ import { Card } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { IconTile } from "../components/ui/icon-tile";
 import { BrandLogo } from "../components/ui/BrandLogo";
+import { onSyncStatusChange, triggerSync } from "../lib/sync";
+import { getOutboxStatus } from "../lib/outbox";
+import { startLocationWatchdog } from "../lib/locationWatchdog";
+import { LocationOffBanner } from "../components/LocationOffBanner";
+import { TouchableOpacity } from "react-native";
 
 import {
   calculateBoundaryMetrics,
@@ -49,10 +54,20 @@ export default function HomeScreen({ onGoTo }: HomeScreenProps) {
     toleranceM: number;
   } | null>(null);
 
+  const [syncStatus, setSyncStatus] = useState<{
+    pendingCount: number;
+    lastSyncAt: number | null;
+    isSyncing: boolean;
+  }>({ pendingCount: 0, lastSyncAt: null, isSyncing: false });
+
   const employeeRef = useRef<Employee | null>(null);
   useEffect(() => {
     employeeRef.current = employee;
   }, [employee]);
+
+  useEffect(() => {
+    return onSyncStatusChange(setSyncStatus);
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -61,13 +76,22 @@ export default function HomeScreen({ onGoTo }: HomeScreenProps) {
       const user = JSON.parse(raw);
       const employeeId = user.employeeId;
 
-      const [sumRes, empRes] = await Promise.all([
+      const [sumRes, empRes, outbox] = await Promise.all([
         mobileApi.getAttendanceSummary().catch(() => null),
         employeeId ? mobileApi.getMyProfile(employeeId).catch(() => null) : null,
+        getOutboxStatus().catch(() => null),
       ]);
 
       if (sumRes?.success) setSummary(sumRes.summary);
       if (empRes?.success) setEmployee(empRes.data);
+
+      // Start watchdog
+      startLocationWatchdog(() => {
+        return (
+          outbox?.lastCheckInState === "CHECKED_IN" ||
+          empRes?.data?.currentStatus === "WORKING"
+        );
+      });
     } catch (e) {
       console.error("Home load error:", e);
     } finally {
@@ -79,12 +103,22 @@ export default function HomeScreen({ onGoTo }: HomeScreenProps) {
   useEffect(() => {
     load();
 
+    // Requirement 18: On app start, if the user is still checked in, resume tracking.
     (async () => {
-      const { foreground, background } = await requestPermissions();
-      if (foreground) {
-        await startForegroundTracking();
-        if (background) {
-          await startBackgroundTracking().catch(() => {});
+      const outbox = await getOutboxStatus().catch(() => null);
+      const raw = await SecureStore.getItemAsync("sologix_user");
+      const user = raw ? JSON.parse(raw) : null;
+      const isStillCheckedIn =
+        outbox?.lastCheckInState === "CHECKED_IN" || user?.currentStatus === "WORKING";
+
+      if (isStillCheckedIn) {
+        console.log("[Home] User is actively checked in, resuming tracking...");
+        const { foreground, background } = await requestPermissions();
+        if (foreground) {
+          await startForegroundTracking();
+          if (background) {
+            await startBackgroundTracking().catch(() => {});
+          }
         }
       }
     })();
@@ -225,6 +259,65 @@ export default function HomeScreen({ onGoTo }: HomeScreenProps) {
           </View>
         </View>
       </LinearGradient>
+
+      {/* Location-Off Red Banner */}
+      <LocationOffBanner />
+
+      {/* Sync Status Card (Requirement E.17) */}
+      <Card className="border-[#F3E8C8] bg-white">
+        <View className="flex-row items-center justify-between">
+          <View className="flex-row items-center gap-2.5">
+            <View
+              className={`w-9 h-9 rounded-xl items-center justify-center ${
+                syncStatus.pendingCount > 0 ? "bg-[#FEF3C7]" : "bg-[#DCFCE7]"
+              }`}
+            >
+              <Ionicons
+                name={
+                  syncStatus.pendingCount > 0
+                    ? "cloud-upload-outline"
+                    : "checkmark-circle-outline"
+                }
+                size={20}
+                color={syncStatus.pendingCount > 0 ? "#D97706" : "#16A34A"}
+              />
+            </View>
+            <View>
+              <Text className="text-[14px] font-bold text-[#1F2937]">
+                {syncStatus.pendingCount > 0
+                  ? `${syncStatus.pendingCount} Pending ${
+                      syncStatus.pendingCount === 1 ? "Item" : "Items"
+                    }`
+                  : "All Data Synced"}
+              </Text>
+              <Text className="text-[11px] text-[#6B7280]">
+                {syncStatus.lastSyncAt
+                  ? `Last sync: ${new Date(syncStatus.lastSyncAt).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}`
+                  : "Not synced yet"}
+              </Text>
+            </View>
+          </View>
+
+          <TouchableOpacity
+            onPress={() => triggerSync()}
+            disabled={syncStatus.isSyncing}
+            activeOpacity={0.8}
+            className="bg-[#FEF3C7] border border-[#F3E8C8] px-3 py-1.5 rounded-xl flex-row items-center gap-1.5"
+          >
+            {syncStatus.isSyncing ? (
+              <ActivityIndicator size="small" color="#D97706" />
+            ) : (
+              <>
+                <Ionicons name="sync" size={14} color="#D97706" />
+                <Text className="text-[12px] font-bold text-[#D97706]">Sync now</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+      </Card>
 
       {/* Primary Identity Card */}
       <Card>

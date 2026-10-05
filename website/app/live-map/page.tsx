@@ -4,7 +4,6 @@ import React, { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { PageHeader } from "@/components/page-header";
-import { SimulationBar } from "@/components/simulation-bar";
 import { FormSelect } from "@/components/form-select";
 import { useAuth } from "@/lib/auth-context";
 import { api } from "@/lib/api";
@@ -97,11 +96,6 @@ export default function LiveMapPage() {
             </>
           }
         />
-
-        {/* Live Simulation Toolbar — ops tool, not available to plain employees */}
-        {canAccess(["ADMIN"]) && (
-          <SimulationBar employees={employees} onSimulateComplete={loadData} />
-        )}
 
         {/* Fullscreen Map Canvas */}
         <Card className="flex-1 min-h-0 overflow-hidden p-0 shadow-xs relative border-border">

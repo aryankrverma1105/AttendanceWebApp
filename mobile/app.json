@@ -26,18 +26,14 @@
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "Sologix Energy needs your location to automatically record attendance when you enter or exit an assigned site.",
+          "locationAlwaysAndWhenInUsePermission": "Sologix Energy needs your location to record attendance during your shift.",
           "locationAlwaysPermission": "Sologix Energy needs always-on location to record attendance even when the app is in the background.",
-          "locationWhenInUsePermission": "Sologix Energy needs location access to show your proximity to assigned geofence sites.",
+          "locationWhenInUsePermission": "Sologix Energy needs location access to show your proximity to assigned solar sites.",
           "isIosBackgroundLocationEnabled": true,
           "isAndroidBackgroundLocationEnabled": true
         }
       ]
     ],
-
-    "extra": {
-      "apiBase": "http://172.16.0.152:3000/api"
-    },
 
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -51,6 +47,15 @@
     },
     "android": {
       "package": "com.sologix.energy",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
+        "POST_NOTIFICATIONS",
+        "RECEIVE_BOOT_COMPLETED"
+      ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#FFFBF0"

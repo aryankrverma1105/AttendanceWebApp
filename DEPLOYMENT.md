@@ -147,16 +147,15 @@ POSTGRES_DB=sologix_db
 POSTGRES_USER=sologix_user
 POSTGRES_PASSWORD=UseAStrongRandomPassword123!
 
-# JWT Secrets (Generate with: openssl rand -hex 32)
-JWT_ACCESS_SECRET=your_generated_access_secret_hex
-JWT_REFRESH_SECRET=your_generated_refresh_secret_hex
+# JWT Secret (Generate with: openssl rand -hex 32)
+JWT_SECRET=your_generated_jwt_secret_hex_at_least_32_characters
 
 # CORS & Domain
 ALLOWED_ORIGINS=https://attendance.yourdomain.com
 
-# First Admin User Bootstrap
-FIRST_ADMIN_EMAIL=admin@yourdomain.com
-FIRST_ADMIN_PASSWORD=AdminSecurePass2026!
+# First Admin User Bootstrap (Created once upon initial startup)
+SYSTEM_ADMIN=admin@yourdomain.com
+SYSTEM_ADMIN_PASSWORD=AdminSecurePass2026!
 
 # GCS Bucket for Backups
 GCS_BACKUP_BUCKET=sologix-attendance-backups
@@ -208,11 +207,11 @@ Expected response:
 
 ---
 
-## 6. Automated Daily Backups to Google Cloud Storage
+## 6. Automated Daily Backups to Google Cloud Storage (02:00 IST)
 
 ### Step 6.1: Make the Backup Script Executable
 ```bash
-chmod +x scripts/backup-gcs.sh
+chmod +x scripts/backup-gcs.sh scripts/restore-gcs.sh
 ```
 
 ### Step 6.2: Test Manual Backup
@@ -225,21 +224,55 @@ gcloud storage ls gs://sologix-attendance-backups/backups/
 ```
 
 ### Step 6.3: Schedule Daily Backup via Crontab (Runs at 02:00 IST)
+Since the system timezone was configured to `Asia/Kolkata` in Step 3.2, crontab fires at 02:00 IST:
 ```bash
 crontab -e
 ```
-Add the following entry:
+Add the following cron entry:
 ```cron
 0 2 * * * /home/$USER/sologix-app/scripts/backup-gcs.sh >> /var/log/sologix-backup.log 2>&1
 ```
 
 ---
 
-## 7. Connecting the Mobile App to Production
+## 7. Database Restore Guide
+
+In the event of accidental data corruption, migration rollback, or server relocation, restore PostgreSQL from a GCS backup:
+
+### Option A: Using the Automated Restore Script
+```bash
+# 1. List available backups in GCS
+gcloud storage ls gs://sologix-attendance-backups/backups/
+
+# 2. Run restore script pointing to target backup file
+./scripts/restore-gcs.sh gs://sologix-attendance-backups/backups/sologix_db_backup_20261005_020000.sql.gz
+```
+
+### Option B: Manual Step-by-Step Restore
+```bash
+# 1. Download desired backup from Cloud Storage
+gcloud storage cp gs://sologix-attendance-backups/backups/sologix_db_backup_20261005_020000.sql.gz ./latest_backup.sql.gz
+
+# 2. Stop application services to prevent active connections during restore
+docker compose stop backend website
+
+# 3. Stream compressed dump into PostgreSQL container
+zcat latest_backup.sql.gz | docker compose exec -T postgres psql -U sologix_user -d sologix_db
+
+# 4. Run Prisma migration catch-up (if restoring older schema)
+docker compose run --rm backend bun x prisma migrate deploy
+
+# 5. Restart application services
+docker compose start backend website
+```
+
+---
+
+## 8. Connecting the Mobile App to Production
 
 Update your mobile configuration in `mobile/.env`:
 ```env
-EXPO_PUBLIC_API_BASE=https://attendance.yourdomain.com
+EXPO_PUBLIC_API_BASE=https://attendance.yourdomain.com/api
 ```
 Rebuild your Android APK using EAS:
 ```bash
@@ -249,7 +282,7 @@ eas build --platform android --profile production
 
 ---
 
-## 8. Maintenance & Operations Cheatsheet
+## 9. Maintenance & Operations Cheatsheet
 
 | Task | Command |
 |---|---|
@@ -260,3 +293,4 @@ eas build --platform android --profile production
 | **Run Prisma Migrations** | `docker compose exec backend bun x prisma migrate deploy` |
 | **Interactive DB Shell** | `docker compose exec postgres psql -U sologix_user -d sologix_db` |
 | **Restore Database Backup** | `zcat backup.sql.gz \| docker compose exec -T postgres psql -U sologix_user -d sologix_db` |
+

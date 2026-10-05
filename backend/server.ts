@@ -8,7 +8,10 @@ import app from "./src/app";
 import prisma from "./src/config/prisma";
 import { initSocketServer } from "./src/services/socket.service";
 
-const PORT = Number(process.env.PORT) || 3000;
+import { config } from "./src/config/config";
+import { startBackgroundScheduler } from "./src/services/scheduler.service";
+
+const PORT = Number(process.env.PORT) || 5000;
 
 async function initialize() {
   try {
@@ -18,6 +21,8 @@ async function initialize() {
     const httpServer = http.createServer(app);
     initSocketServer(httpServer);
     console.log("[Socket.IO] Realtime server initialized");
+
+    startBackgroundScheduler();
 
     httpServer.listen(PORT, () => {
       console.log(`[Sologix Server] API & Sockets running on http://localhost:${PORT}`);

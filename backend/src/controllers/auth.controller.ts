@@ -13,10 +13,7 @@ import {
 } from "../services/auth.service";
 
 /**
- * Best-effort device identifier for the single-active-session policy. Clients (mobile +
- * website) send a stable per-install/per-browser `deviceId`; if one isn't supplied (older
- * client, direct API call) we fall back to a hash of IP+User-Agent, which is weaker but
- * still distinguishes "obviously a different device" from "the same client retrying".
+ * Best-effort device identifier for the single-active-session policy.
  */
 function resolveDeviceFingerprint(req: Request): string {
   const supplied = (req.body?.deviceId as string | undefined)?.trim();
@@ -26,8 +23,7 @@ function resolveDeviceFingerprint(req: Request): string {
 }
 
 /**
- * Enforces "block new device until the old one logs out": refuses the login/token-issue
- * if the user already has a live session bound to a different device fingerprint.
+ * Enforces "block new device until the old one logs out".
  */
 async function assertNoConflictingSession(userId: number, fingerprint: string) {
   const active = await findActiveSession(userId);
@@ -62,10 +58,7 @@ export async function loginUser(req: Request, res: Response) {
     });
 
     if (isSystemAdminLogin && !user) {
-      // Bootstrap: create the very first admin account. Once it (or any other admin)
-      // exists, this path never runs again for that email — an existing account is
-      // never silently promoted, since that would let anyone who learns this password
-      // escalate an unrelated account to ADMIN.
+      // Bootstrap: create the very first admin account
       const passwordHash = await hashPassword(config.SYSTEM_ADMIN_PASSWORD!);
       user = await prisma.user.create({
         data: {
@@ -75,9 +68,11 @@ export async function loginUser(req: Request, res: Response) {
           role: "ADMIN",
           name: "System Administrator",
           isEmailVerified: true,
+          isActive: true,
         },
         include: { employee: true },
       });
+      console.log("[Bootstrap] Created initial SYSTEM_ADMIN account:", systemAdminEmail);
     } else {
       if (!user) {
         return res.status(401).json({ success: false, message: "Invalid email or password" });
@@ -93,23 +88,17 @@ export async function loginUser(req: Request, res: Response) {
       return res.status(401).json({ success: false, message: "Invalid email or password" });
     }
 
-    if (!user.employee) {
-      try {
-        const empCode = `EMP${1000 + user.id}`;
-        const defaultShift = await prisma.shift.findFirst();
-        const newEmp = await prisma.employee.create({
-          data: {
-            userId: user.id,
-            employeeCode: empCode,
-            currentStatus: "WORKING",
-            defaultShiftId: defaultShift?.id,
-          },
-        });
-        user = { ...user, employee: newEmp };
-      } catch (err) {
-        console.warn("Could not auto-create employee record:", err);
-      }
+    // Block deactivated accounts from logging in
+    if (!user.isActive) {
+      return res.status(403).json({
+        success: false,
+        message: "Your account has been deactivated. Please contact your administrator.",
+      });
     }
+
+    // NOTE: Auto-creation of Employee record at login has been completely REMOVED.
+    // Only USER accounts get an Employee record, created explicitly by an ADMIN.
+    // ADMIN accounts never get an employee record, attendance, or tracking.
 
     const deviceId = resolveDeviceFingerprint(req);
     const conflict = await assertNoConflictingSession(user.id, deviceId);
@@ -121,7 +110,7 @@ export async function loginUser(req: Request, res: Response) {
       userId: user.id,
       email: user.email,
       role: user.role,
-      employeeId: user.employee?.id,
+      employeeId: user.role === "USER" ? user.employee?.id : undefined,
     };
 
     const accessToken = generateAccessToken(tokenPayload);
@@ -133,7 +122,6 @@ export async function loginUser(req: Request, res: Response) {
 
     return res.status(200).json({
       success: true,
-      message: "Logged in successfully",
       token: accessToken,
       refreshToken,
       user: {
@@ -143,7 +131,7 @@ export async function loginUser(req: Request, res: Response) {
         name: user.name,
         role: user.role,
         photoUrl: user.photoUrl,
-        employeeId: user.employee?.id,
+        employeeId: user.role === "USER" ? user.employee?.id : undefined,
       },
     });
   } catch (error: any) {
@@ -152,84 +140,20 @@ export async function loginUser(req: Request, res: Response) {
   }
 }
 
-/**
- * Quick role-switch for demos — lets an ALREADY authenticated caller preview the app as
- * another role without re-entering credentials. This mints a real token for a real
- * account, so it is only ever reachable when explicitly opted into via ALLOW_DEV_MODE
- * (checked in the route) and requires a valid JWT (checked in the route via `authorized`).
- * It never creates accounts on demand and never accepts an arbitrary target email —
- * both would turn "preview another role" into "impersonate a specific person".
- */
-export async function demoLogin(req: Request, res: Response) {
-  try {
-    const { role = "MANAGER" } = req.body;
-    const allowedRoles = ["ADMIN", "MANAGER", "EMPLOYEE"];
-    if (!allowedRoles.includes(role)) {
-      return res.status(400).json({ success: false, message: "Invalid role" });
-    }
-
-    const user = await prisma.user.findFirst({
-      where: { role },
-      include: { employee: true },
-    });
-
-    if (!user) {
-      return res.status(404).json({ success: false, message: `Demo user for role ${role} not found` });
-    }
-
-    const deviceId = resolveDeviceFingerprint(req);
-    const conflict = await assertNoConflictingSession(user.id, deviceId);
-    if (conflict.blocked) {
-      return res.status(409).json({ success: false, code: "DEVICE_CONFLICT", message: conflict.message });
-    }
-
-    const tokenPayload = {
-      userId: user.id,
-      email: user.email,
-      role: user.role,
-      employeeId: user.employee?.id,
-    };
-
-    const accessToken = generateAccessToken(tokenPayload);
-    const refreshToken = await generateRefreshToken(
-      { userId: user.id, email: user.email },
-      undefined,
-      { fingerprint: deviceId, ip: req.ip }
-    );
-
-    return res.status(200).json({
-      success: true,
-      token: accessToken,
-      refreshToken,
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-        photoUrl: user.photoUrl,
-        employeeId: user.employee?.id,
-      },
-    });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
-  }
-}
-
-/** Revokes the refresh token for the caller's current device, freeing it up for another device to log in. */
+/** Revokes the refresh token for the caller's current device. */
 export async function logoutUser(req: Request, res: Response) {
   try {
     const refreshToken = req.body?.refreshToken as string | undefined;
     if (refreshToken) {
       await revokeRefreshToken(refreshToken);
     }
-    return res.status(200).json({ success: true });
+    return res.status(200).json({ success: true, message: "Logged out successfully" });
   } catch (error: any) {
     return res.status(500).json({ success: false, message: error.message });
   }
 }
 
-/** Admin escape hatch: clears a user's active session(s) when they've lost access to their device. */
+/** Admin escape hatch: clears a user's active session(s). */
 export async function adminResetUserSessions(req: Request, res: Response) {
   try {
     const userId = Number(req.params["userId"]);
@@ -266,6 +190,10 @@ export async function getCurrentUser(req: Request, res: Response) {
       return res.status(404).json({ success: false, message: "User not found" });
     }
 
+    if (!user.isActive) {
+      return res.status(403).json({ success: false, message: "Account deactivated" });
+    }
+
     return res.status(200).json({
       success: true,
       user: {
@@ -275,7 +203,7 @@ export async function getCurrentUser(req: Request, res: Response) {
         name: user.name,
         role: user.role,
         photoUrl: user.photoUrl,
-        employee: user.employee,
+        employee: user.role === "USER" ? user.employee : null,
       },
     });
   } catch (error: any) {
@@ -295,6 +223,10 @@ export async function refreshSession(req: Request, res: Response) {
       return res.status(401).json({ success: false, message: "Invalid or expired refresh token" });
     }
 
+    if (!result.user.isActive) {
+      return res.status(403).json({ success: false, message: "Account has been deactivated" });
+    }
+
     return res.status(200).json({
       success: true,
       token: result.accessToken,
@@ -306,7 +238,7 @@ export async function refreshSession(req: Request, res: Response) {
         name: result.user.name,
         role: result.user.role,
         photoUrl: result.user.photoUrl,
-        employeeId: result.user.employee?.id,
+        employeeId: result.user.role === "USER" ? result.user.employee?.id : undefined,
       },
     });
   } catch (error: any) {

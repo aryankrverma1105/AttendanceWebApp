@@ -1,5 +1,6 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
+// Sologix Energy - Prisma Schema
+// Additive schema with strict ADMIN and USER roles, offline clientEvent idempotency,
+// manual attendance coordinates, and location status event tracking.
 
 generator client {
   provider = "prisma-client"
@@ -12,8 +13,7 @@ datasource db {
 
 enum Role {
   ADMIN
-  MANAGER
-  EMPLOYEE
+  USER
 }
 
 model User {
@@ -21,7 +21,7 @@ model User {
   username        String   @unique
   email           String   @unique
   passwordHash    String
-  role            Role     @default(EMPLOYEE)
+  role            Role     @default(USER)
   name            String?
   photoUrl        String?
   isActive        Boolean  @default(true)
@@ -71,7 +71,7 @@ model Shift {
   id                 String       @id @default(uuid())
   name               String
   startTime          String       // e.g. "09:00"
-  endTime            String       // e.g. "18:00" (supports crossing midnight like 22:00 -> 06:00)
+  endTime            String       // e.g. "18:00"
   timezone           String       @default("Asia/Kolkata")
   gracePeriodMinutes Int          @default(15)
   overtimePolicy     String       @default("STANDARD")
@@ -82,31 +82,33 @@ model Shift {
 }
 
 model Employee {
-  id                  String              @id @default(uuid())
-  userId              Int                 @unique
-  user                User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  employeeCode        String              @unique
-  phone               String?
-  departmentId        String?
-  department          Department?         @relation(fields: [departmentId], references: [id])
-  managerId           String?
-  manager             Employee?           @relation("ManagerSubordinates", fields: [managerId], references: [id])
-  subordinates        Employee[]          @relation("ManagerSubordinates")
-  defaultShiftId      String?
-  defaultShift        Shift?              @relation(fields: [defaultShiftId], references: [id])
-  employmentStatus    String              @default("ACTIVE")
-  currentStatus       String              @default("NOT_STARTED") // WORKING, AWAY, REMOTE_WORKING, ON_LEAVE, OVERTIME, SHIFT_COMPLETED
-  lastLatitude        Float?
-  lastLongitude       Float?
-  lastLocationUpdate  DateTime?
-  punctualityScore    Float               @default(100.0)
-  geofenceAssignments EmployeeGeofence[]
-  attendances         Attendance[]
-  locationUpdates     LocationUpdate[]
-  geofenceEvents      GeofenceEvent[]
-  leaveRequests       LeaveRequest[]
-  createdAt           DateTime            @default(now())
-  updatedAt           DateTime            @updatedAt
+  id                   String                @id @default(uuid())
+  userId               Int                   @unique
+  user                 User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  employeeCode         String                @unique
+  phone                String?
+  departmentId         String?
+  department           Department?           @relation(fields: [departmentId], references: [id])
+  managerId            String?
+  manager              Employee?             @relation("ManagerSubordinates", fields: [managerId], references: [id])
+  subordinates         Employee[]            @relation("ManagerSubordinates")
+  defaultShiftId       String?
+  defaultShift         Shift?                @relation(fields: [defaultShiftId], references: [id])
+  employmentStatus     String                @default("ACTIVE")
+  currentStatus        String                @default("NOT_STARTED") // WORKING, AWAY, REMOTE_WORKING, ON_LEAVE, OVERTIME, SHIFT_COMPLETED, NO_SIGNAL
+  lastLatitude         Float?
+  lastLongitude        Float?
+  lastLocationUpdate   DateTime?
+  isLocationOff        Boolean               @default(false)
+  punctualityScore     Float                 @default(100.0)
+  geofenceAssignments  EmployeeGeofence[]
+  attendances          Attendance[]
+  locationUpdates      LocationUpdate[]
+  locationStatusEvents LocationStatusEvent[]
+  geofenceEvents       GeofenceEvent[]
+  leaveRequests        LeaveRequest[]
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
 }
 
 model Geofence {
@@ -144,9 +146,14 @@ model Attendance {
   employee         Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   shiftId          String?
   shift            Shift?    @relation(fields: [shiftId], references: [id])
-  workDate         String    // YYYY-MM-DD
+  workDate         String    // YYYY-MM-DD (Asia/Kolkata)
   checkInAt        DateTime?
+  checkInLat       Float?
+  checkInLng       Float?
   checkOutAt       DateTime?
+  checkOutLat      Float?
+  checkOutLng      Float?
+  checkOutType     String?   // MANUAL, AUTO_9PM, ADMIN
   status           String    @default("WORKING") // WORKING, AWAY, REMOTE_WORKING, OVERTIME, SHIFT_COMPLETED
   workingMinutes   Int       @default(0)
   breakMinutes     Int       @default(0)
@@ -158,12 +165,14 @@ model Attendance {
   updatedAt        DateTime  @updatedAt
 
   @@unique([employeeId, workDate])
+  @@index([workDate, employeeId])
 }
 
 model LocationUpdate {
   id             String    @id @default(uuid())
   employeeId     String
   employee       Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  clientPointId  String?
   latitude       Float
   longitude      Float
   accuracyMeters Float?
@@ -173,6 +182,29 @@ model LocationUpdate {
   isAnomaly      Boolean   @default(false)
   recordedAt     DateTime
   receivedAt     DateTime  @default(now())
+
+  @@unique([employeeId, clientPointId])
+  @@index([employeeId, recordedAt])
+}
+
+model ProcessedClientEvent {
+  id            String   @id @default(uuid())
+  clientEventId String   @unique
+  eventType     String   // CHECK_IN, CHECK_OUT, LOCATION_STATUS
+  employeeId    String?
+  processedAt   DateTime @default(now())
+}
+
+model LocationStatusEvent {
+  id            String   @id @default(uuid())
+  employeeId    String
+  employee      Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  state         String   // LOCATION_OFF, PERMISSION_REVOKED, LOCATION_ON, NO_SIGNAL
+  at            DateTime
+  clientEventId String?  @unique
+  createdAt     DateTime @default(now())
+
+  @@index([employeeId, at])
 }
 
 model GeofenceEvent {
@@ -206,7 +238,7 @@ model Notification {
   id              String    @id @default(uuid())
   recipientUserId Int
   recipient       User      @relation(fields: [recipientUserId], references: [id], onDelete: Cascade)
-  type            String    // CHECK_IN, CHECK_OUT, LATE_ARRIVAL, GEOFENCE_EXIT, OVERTIME, BREACH, LEAVE
+  type            String    // CHECK_IN, CHECK_OUT, LATE_ARRIVAL, GEOFENCE_EXIT, OVERTIME, BREACH, LEAVE, LOCATION_OFF, NO_SIGNAL
   title           String
   message         String
   readAt          DateTime?

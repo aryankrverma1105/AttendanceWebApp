@@ -260,8 +260,10 @@ Key models managed via Prisma in `backend/prisma/schema.prisma`:
 ```env
 PORT=5000
 DATABASE_URL="postgresql://postgres:postgres@localhost:5432/sologix_db?schema=public"
-JWT_ACCESS_SECRET="sologix-access-secret-key"
-JWT_REFRESH_SECRET="sologix-refresh-secret-key"
+JWT_SECRET="sologix-jwt-secret-key-at-least-32-characters-long"
+SYSTEM_ADMIN="admin@sologix.energy"
+SYSTEM_ADMIN_PASSWORD="AdminSecurePass2026!"
+AUTO_GEOFENCE_ATTENDANCE=false
 CORS_ORIGIN="http://localhost:3000"
 TZ="Asia/Kolkata"
 ```
@@ -273,8 +275,33 @@ NEXT_PUBLIC_API_URL="http://localhost:5000"
 
 ### Mobile (`mobile/.env`)
 ```env
-EXPO_PUBLIC_API_BASE="http://10.0.2.2:5000"
+EXPO_PUBLIC_API_BASE="https://YOUR_DOMAIN/api"
 ```
+
+---
+
+## 14. Automated Backups & Disaster Recovery (02:00 IST)
+
+### Daily Cloud Storage Backup
+A standalone backup script is provided in `scripts/backup-gcs.sh`. To schedule this to run automatically every night at 02:00 IST:
+```bash
+crontab -e
+```
+Add the following line:
+```cron
+0 2 * * * /path/to/repo/scripts/backup-gcs.sh >> /var/log/sologix-backup.log 2>&1
+```
+
+### Restoring from Backup
+Use the automated restore utility or stream directly into the PostgreSQL container:
+```bash
+# Automated restore script
+./scripts/restore-gcs.sh gs://your-bucket-name/backups/sologix_db_backup_YYYYMMDD_020000.sql.gz
+
+# Manual restore
+zcat sologix_db_backup_YYYYMMDD_020000.sql.gz | docker compose exec -T postgres psql -U sologix_user -d sologix_db
+```
+
 
 ---
 

@@ -17,12 +17,6 @@ import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
 import { UserCheck, AlertCircle, Sun, ShieldCheck } from "lucide-react"
 import { BrandLogo } from "@/components/brand-logo"
 
-const DEMO_ACCOUNTS = [
-  { label: "Admin", email: "admin@gmail.com", password: "Sampathsagar@255308" },
-  { label: "Manager", email: "manager@example.com", password: "Password123!" },
-  { label: "Employee", email: "rahul@example.com", password: "Password123!" },
-]
-
 export default function LoginPage() {
   const router = useRouter()
   const { login } = useAuth()
@@ -54,12 +48,6 @@ export default function LoginPage() {
     } else {
       setError(res.message || "Invalid email or password.")
     }
-  }
-
-  const fillDemoAccount = (account: (typeof DEMO_ACCOUNTS)[number]) => {
-    setEmail(account.email)
-    setPassword(account.password)
-    setError(null)
   }
 
   return (
@@ -231,27 +219,6 @@ export default function LoginPage() {
               </form>
             </CardContent>
           </Card>
-
-          {/* Demo Quick Fill */}
-          <div className="space-y-2">
-            <p className="text-center text-[11px] font-bold tracking-wider text-[#6B7280] uppercase">
-              Quick Fill Demo Credentials
-            </p>
-            <div className="flex items-center justify-center gap-2">
-              {DEMO_ACCOUNTS.map((account) => (
-                <Button
-                  key={account.label}
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="border-[#F3E8C8] bg-white text-xs font-semibold text-[#1F2937] hover:bg-[#FEF3C7] hover:text-[#D97706]"
-                  onClick={() => fillDemoAccount(account)}
-                >
-                  {account.label}
-                </Button>
-              ))}
-            </div>
-          </div>
 
           {/* Under login card credit */}
           <div className="text-center text-xs text-[#6B7280] font-medium pt-2">

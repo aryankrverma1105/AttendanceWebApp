@@ -5,15 +5,15 @@
 import * as SecureStore from "expo-secure-store";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
-// Set your backend IP in app.json under extra.apiBase, or fall back to local
-const DEFAULT_API_BASE = "http://172.16.0.152:3000/api";
-
 export const getApiBase = (): string => {
+  if (process.env.EXPO_PUBLIC_API_BASE) {
+    return process.env.EXPO_PUBLIC_API_BASE;
+  }
   try {
     const constants = require("expo-constants").default;
-    return constants.expoConfig?.extra?.apiBase ?? DEFAULT_API_BASE;
+    return constants.expoConfig?.extra?.apiBase || "http://localhost:5000/api";
   } catch {
-    return DEFAULT_API_BASE;
+    return "http://localhost:5000/api";
   }
 };
 

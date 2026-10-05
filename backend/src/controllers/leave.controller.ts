@@ -11,7 +11,7 @@ export async function getLeaveRequests(req: Request, res: Response) {
     // Same rule as attendance: an EMPLOYEE only ever sees their own leave requests.
     const authRole = ((req as any).user?.role || "").toUpperCase();
     const authEmployeeId = (req as any).user?.employeeId;
-    const isPrivileged = authRole === "ADMIN" || authRole === "MANAGER";
+    const isPrivileged = authRole === "ADMIN";
 
     const where: any = {};
     if (isPrivileged) {
@@ -49,11 +49,9 @@ export async function createLeaveRequest(req: Request, res: Response) {
   try {
     const { employeeId, startDate, endDate, leaveType = "CASUAL", reason } = req.body;
 
-    // An EMPLOYEE can only ever file leave for themselves; only ADMIN/MANAGER may name a
-    // different employeeId (e.g. HR filing leave on someone's behalf).
     const authRole = ((req as any).user?.role || "").toUpperCase();
     const authEmployeeId = (req as any).user?.employeeId;
-    const isPrivileged = authRole === "ADMIN" || authRole === "MANAGER";
+    const isPrivileged = authRole === "ADMIN";
     const targetEmployeeId = isPrivileged ? employeeId || authEmployeeId : authEmployeeId;
 
     if (!targetEmployeeId || !startDate || !endDate) {

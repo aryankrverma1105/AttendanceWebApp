@@ -10,7 +10,10 @@ import {
 import { checkLocationAnomaly } from "./anomaly.service";
 import { broadcastEvent } from "./socket.service";
 
+import config from "../config/config";
+
 export interface LocationPayload {
+  clientPointId?: string;
   latitude: number;
   longitude: number;
   accuracy?: number | null;
@@ -26,91 +29,66 @@ export async function resolveEmployee(
 ) {
   let employee: any = null;
 
-  if (employeeIdOrIdentifier && typeof employeeIdOrIdentifier === "string" && employeeIdOrIdentifier.trim() !== "") {
-    const trimmed = employeeIdOrIdentifier.trim();
+  try {
+    if (employeeIdOrIdentifier && typeof employeeIdOrIdentifier === "string" && employeeIdOrIdentifier.trim() !== "") {
+      const trimmed = employeeIdOrIdentifier.trim();
 
-    // 1. Try finding by primary key UUID
-    try {
-      employee = await prisma.employee.findUnique({
-        where: { id: trimmed },
-        include: {
-          user: true,
-          geofenceAssignments: { include: { geofence: true } },
-        },
-      });
-    } catch {
-      // Ignored if invalid UUID format
-    }
-
-    // 2. Try finding by employeeCode (e.g. EMP1001)
-    if (!employee) {
-      employee = await prisma.employee.findUnique({
-        where: { employeeCode: trimmed },
-        include: {
-          user: true,
-          geofenceAssignments: { include: { geofence: true } },
-        },
-      });
-    }
-
-    // 3. Try finding by numeric userId if identifier is a valid number
-    if (!employee && !isNaN(Number(trimmed))) {
-      employee = await prisma.employee.findUnique({
-        where: { userId: Number(trimmed) },
-        include: {
-          user: true,
-          geofenceAssignments: { include: { geofence: true } },
-        },
-      });
-    }
-  }
-
-  // 4. Try resolving via authenticated user's ID
-  if (!employee && authUserId && !isNaN(Number(authUserId))) {
-    employee = await prisma.employee.findUnique({
-      where: { userId: Number(authUserId) },
-      include: {
-        user: true,
-        geofenceAssignments: { include: { geofence: true } },
-      },
-    });
-
-    // 5. If user exists but employee profile has not been created, auto-provision it
-    if (!employee) {
-      const user = await prisma.user.findUnique({
-        where: { id: Number(authUserId) },
-      });
-      if (user) {
-        const empCode = `EMP${1000 + user.id}`;
-        const defaultShift = await prisma.shift.findFirst();
-        employee = await prisma.employee.create({
-          data: {
-            userId: user.id,
-            employeeCode: empCode,
-            currentStatus: "WORKING",
-            defaultShiftId: defaultShift?.id,
-          },
+      // 1. Try finding by primary key UUID
+      try {
+        employee = await prisma.employee.findUnique({
+          where: { id: trimmed },
           include: {
             user: true,
             geofenceAssignments: { include: { geofence: true } },
           },
         });
-        console.log(`[Location] Auto-provisioned employee ${empCode} for authenticated user ${user.id}`);
+      } catch {
+        // Ignored if invalid UUID format
+      }
+
+      // 2. Try finding by employeeCode (e.g. EMP1001)
+      if (!employee) {
+        employee = await prisma.employee.findUnique({
+          where: { employeeCode: trimmed },
+          include: {
+            user: true,
+            geofenceAssignments: { include: { geofence: true } },
+          },
+        });
+      }
+
+      // 3. Try finding by numeric userId if identifier is a valid number
+      if (!employee && !isNaN(Number(trimmed))) {
+        employee = await prisma.employee.findUnique({
+          where: { userId: Number(trimmed) },
+          include: {
+            user: true,
+            geofenceAssignments: { include: { geofence: true } },
+          },
+        });
       }
     }
-  }
 
-  // 6. Ultimate fallback: if only 1 employee exists in database (single tenant / admin user demo)
-  if (!employee) {
-    const totalCount = await prisma.employee.count();
-    if (totalCount === 1) {
-      employee = await prisma.employee.findFirst({
+    // 4. Try resolving via authenticated user's ID
+    if (!employee && authUserId && !isNaN(Number(authUserId))) {
+      employee = await prisma.employee.findUnique({
+        where: { userId: Number(authUserId) },
         include: {
           user: true,
           geofenceAssignments: { include: { geofence: true } },
         },
       });
     }
+  } catch (err: any) {
+    console.warn(`Could not resolve employee due to database connection or query error: ${err.message}`);
+    return null;
+  }
+
+
+
+  // ADMIN accounts must never have employee records or tracking
+  if (employee && employee.user?.role === "ADMIN") {
+    return null;
   }
 
   return employee;
@@ -229,22 +207,26 @@ export async function processLocationUpdate(
     evaluation.radiusMeters
   );
 
-  // 7. Handle confirmed transitions
-  if (transition.hasConfirmedEntry && transition.geofenceId && transition.geofenceName) {
-    await processAttendanceOnConfirmedEntry(
-      employee.id,
-      transition.geofenceId,
-      transition.geofenceName,
-      recordedAt
-    );
-  } else if (transition.hasConfirmedExit) {
-    await processAttendanceOnConfirmedExit(
-      employee.id,
-      transition.geofenceId,
-      recordedAt,
-      transition.geofenceName || evaluation.geofenceName
-    );
-  } else if (transition.newState === "INSIDE") {
+  // 7. Handle confirmed transitions (only if AUTO_GEOFENCE_ATTENDANCE is enabled)
+  if (config.AUTO_GEOFENCE_ATTENDANCE) {
+    if (transition.hasConfirmedEntry && transition.geofenceId && transition.geofenceName) {
+      await processAttendanceOnConfirmedEntry(
+        employee.id,
+        transition.geofenceId,
+        transition.geofenceName,
+        recordedAt
+      );
+    } else if (transition.hasConfirmedExit) {
+      await processAttendanceOnConfirmedExit(
+        employee.id,
+        transition.geofenceId,
+        recordedAt,
+        transition.geofenceName || evaluation.geofenceName
+      );
+    }
+  }
+
+  if (transition.newState === "INSIDE") {
     // Keep active attendance workingMinutes updated in real-time while working on-site
     const todayStr = getTodayDateString(recordedAt);
     const activeAttendance = await prisma.attendance.findUnique({
@@ -272,6 +254,30 @@ export async function processLocationUpdate(
     }
   }
 
+  // Handle mock location notification to admins
+  if (payload.isMock) {
+    try {
+      const admins = await prisma.user.findMany({ where: { role: "ADMIN" } });
+      for (const admin of admins) {
+        await prisma.notification.create({
+          data: {
+            recipientUserId: admin.id,
+            type: "ANOMALY",
+            title: "Mock Location Detected",
+            message: `Employee ${employee.user.name || employee.employeeCode} submitted a mock/spoofed GPS location (${payload.latitude}, ${payload.longitude}).`,
+          },
+        });
+      }
+      broadcastEvent("anomaly.detected", {
+        employeeName: employee.user.name || employee.employeeCode,
+        employeeId: employee.id,
+        reason: "MOCK_LOCATION",
+      });
+    } catch (e) {
+      console.error("[Location] Failed to notify admins of mock location:", e);
+    }
+  }
+
   // 8. Broadcast live location update to Manager Dashboard
   const broadcastPayload = {
     employeeId: employee.id,
@@ -287,6 +293,7 @@ export async function processLocationUpdate(
     status: employee.currentStatus,
     geofenceName: transition.geofenceName || evaluation.geofenceName,
     distanceMeters: evaluation.distanceMeters,
+    isMock: Boolean(payload.isMock),
     recordedAt: recordedAt.toISOString(),
   };
 
@@ -309,19 +316,117 @@ export async function processBatchLocations(
   updates: LocationPayload[],
   authUserId?: number | string
 ) {
-  const results = [];
-  // Sort updates chronologically by recordedAt
-  const sorted = [...updates].sort(
-    (a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime()
-  );
-
-  for (const item of sorted) {
-    const res = await processLocationUpdate(employeeId, item, authUserId);
-    results.push(res);
+  const employee = await resolveEmployee(employeeId, authUserId);
+  if (!employee) {
+    return { success: false, error: "Employee not found or admin cannot be tracked", acceptedClientPointIds: [] };
   }
 
+  if (!Array.isArray(updates) || updates.length === 0) {
+    return { success: true, processedCount: 0, acceptedClientPointIds: [] };
+  }
+
+  const nowMs = Date.now();
+  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+  const receivedAt = new Date();
+
+  // Reject points more than 1 day in the future
+  const validPoints = updates.filter((u) => {
+    const recMs = new Date(u.recordedAt).getTime();
+    if (isNaN(recMs) || recMs > nowMs + ONE_DAY_MS) {
+      return false;
+    }
+    return isValidCoordinate(Number(u.latitude), Number(u.longitude));
+  });
+
+  if (validPoints.length === 0) {
+    return { success: true, processedCount: 0, acceptedClientPointIds: [] };
+  }
+
+  // Check for mock location flag in batch
+  const hasMock = validPoints.some((p) => p.isMock);
+  if (hasMock) {
+    const mockPoint = validPoints.find((p) => p.isMock);
+    try {
+      const admins = await prisma.user.findMany({ where: { role: "ADMIN" } });
+      for (const admin of admins) {
+        await prisma.notification.create({
+          data: {
+            recipientUserId: admin.id,
+            type: "ANOMALY",
+            title: "Mock Location Detected in Batch",
+            message: `Employee ${employee.user.name || employee.employeeCode} submitted mock/spoofed GPS data in batch upload (${mockPoint?.latitude}, ${mockPoint?.longitude}).`,
+          },
+        });
+      }
+      broadcastEvent("anomaly.detected", {
+        employeeName: employee.user.name || employee.employeeCode,
+        employeeId: employee.id,
+        reason: "MOCK_LOCATION",
+      });
+    } catch (e) {
+      console.error("[Location] Failed to notify admins of mock batch point:", e);
+    }
+  }
+
+  // Prepare database insertion records
+  const recordsToInsert = validPoints.map((p) => ({
+    employeeId: employee.id,
+    clientPointId: p.clientPointId || crypto.randomUUID(),
+    latitude: Number(p.latitude),
+    longitude: Number(p.longitude),
+    accuracyMeters: p.accuracy !== undefined && p.accuracy !== null ? Number(p.accuracy) : null,
+    speed: p.speed !== undefined && p.speed !== null ? Number(p.speed) : null,
+    heading: p.heading !== undefined && p.heading !== null ? Number(p.heading) : null,
+    isMock: Boolean(p.isMock),
+    recordedAt: new Date(p.recordedAt),
+    receivedAt,
+  }));
+
+  // Fast and idempotent insert with skipDuplicates
+  await prisma.locationUpdate.createMany({
+    data: recordsToInsert,
+    skipDuplicates: true,
+  });
+
+  // Sort valid points chronologically to get the newest point
+  const sorted = [...validPoints].sort(
+    (a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime()
+  );
+  const newest = sorted[sorted.length - 1];
+  const newestRecordedAt = new Date(newest.recordedAt);
+
+  // Update employee's last position from the newest point only
+  await prisma.employee.update({
+    where: { id: employee.id },
+    data: {
+      lastLatitude: Number(newest.latitude),
+      lastLongitude: Number(newest.longitude),
+      lastLocationUpdate: newestRecordedAt,
+      isLocationOff: false,
+    },
+  });
+
+  // Broadcast live location update for newest point
+  const broadcastPayload = {
+    employeeId: employee.id,
+    employeeCode: employee.employeeCode,
+    name: employee.user.name || employee.user.username,
+    photoUrl: employee.user.photoUrl,
+    latitude: Number(newest.latitude),
+    longitude: Number(newest.longitude),
+    accuracy: newest.accuracy,
+    speed: newest.speed,
+    heading: newest.heading,
+    status: employee.currentStatus,
+    recordedAt: newestRecordedAt.toISOString(),
+  };
+
+  broadcastEvent("employee.location.updated", broadcastPayload);
+  broadcastEvent("location.updated", broadcastPayload);
+
   return {
-    processedCount: results.length,
-    latestState: results[results.length - 1]?.state,
+    success: true,
+    processedCount: recordsToInsert.length,
+    acceptedClientPointIds: recordsToInsert.map((r) => r.clientPointId),
   };
 }

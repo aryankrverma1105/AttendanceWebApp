@@ -1,9 +1,9 @@
 const getApiBase = (): string => {
   if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL
   if (typeof window !== "undefined") {
-    return `${window.location.protocol}//${window.location.hostname}:3000/api`
+    return `${window.location.protocol}//${window.location.hostname}:5000/api`
   }
-  return "http://localhost:3000/api"
+  return "http://localhost:5000/api"
 }
 
 /**
@@ -167,7 +167,7 @@ export const api = {
   },
   getAttendanceExportUrl: () => `${getApiBase()}/attendance/export`,
 
-  // Employees
+  // Employees & Admin Account Management
   getEmployees: (params: Record<string, string> = {}) => {
     const query = new URLSearchParams(params).toString()
     return fetchApi(`/employees?${query}`)
@@ -175,6 +175,18 @@ export const api = {
   getEmployeeById: (id: string) => fetchApi(`/employees/${id}`),
   createEmployee: (data: any) =>
     fetchApi("/employees", { method: "POST", body: JSON.stringify(data) }),
+  createAdmin: (data: any) =>
+    fetchApi("/admins", { method: "POST", body: JSON.stringify(data) }),
+  toggleEmployeeStatus: (id: string, isActive: boolean) =>
+    fetchApi(`/employees/${id}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ isActive }),
+    }),
+  resetPassword: (id: string) =>
+    fetchApi(`/employees/${id}/reset-password`, { method: "POST" }),
+  resetSessions: (id: string) =>
+    fetchApi(`/employees/${id}/reset-sessions`, { method: "POST" }),
+  getLocationHistory: (id: string) => fetchApi(`/location/${id}/history`),
   assignGeofence: (employeeId: string, data: any) =>
     fetchApi(`/employees/${employeeId}/geofences`, {
       method: "POST",
@@ -217,28 +229,15 @@ export const api = {
   // Notifications
   getNotifications: () => fetchApi("/notifications"),
 
-  // Auth & Demo Login
+  // Auth
   login: (email: string, password: string) =>
     fetchApi("/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password, deviceId: getDeviceId() }),
-    }),
-  demoLogin: (role: string = "ADMIN") =>
-    fetchApi("/auth/demo-login", {
-      method: "POST",
-      body: JSON.stringify({ role, deviceId: getDeviceId() }),
     }),
   logout: (refreshToken: string) =>
     fetchApi("/auth/logout", {
       method: "POST",
       body: JSON.stringify({ refreshToken }),
     }).catch(() => {}),
-  simulateMovement: (
-    employeeId: string,
-    action: "enter_site" | "leave_site" | "return_site"
-  ) =>
-    fetchApi("/location/simulate", {
-      method: "POST",
-      body: JSON.stringify({ employeeId, action }),
-    }),
 }

@@ -12,7 +12,7 @@ const leaveRouter = Router();
 // All routes protected by `authorized` in app.ts
 leaveRouter.get("/", getLeaveRequests);
 leaveRouter.post("/", createLeaveRequest);
-leaveRouter.post("/:id/approve", requireRole("ADMIN", "MANAGER"), approveLeaveRequest);
-leaveRouter.post("/:id/reject", requireRole("ADMIN", "MANAGER"), rejectLeaveRequest);
+leaveRouter.post("/:id/approve", requireRole("ADMIN"), approveLeaveRequest);
+leaveRouter.post("/:id/reject", requireRole("ADMIN"), rejectLeaveRequest);
 
 export default leaveRouter;

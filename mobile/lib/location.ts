@@ -18,7 +18,8 @@ import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { mobileApi } from './api';
-import { reportLocationSample } from './devMode';
+import { queuePendingLocation } from './outbox';
+import { triggerSync } from './sync';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 export const BACKGROUND_LOCATION_TASK = 'sologix-background-location';
@@ -457,36 +458,9 @@ async function _doGetCurrentPosition(): Promise<LocationState | null> {
     }
   } catch {}
 
-  // Tier 5: Safe Office Baseline while waiting for GPS satellite fix
-  console.log(
-    '[Location] Hardware fix currently silent; initializing baseline office coordinates (17.4445, 78.3785) while background watcher seeks lock'
-  );
-  return {
-    latitude: 17.4445,
-    longitude: 78.3785,
-    accuracy: 50,
-    speed: null,
-    heading: null,
-    timestamp: Date.now(),
-    quality: 'fair',
-  };
-}
-
-/** Manually inject a location reading (for development, simulator, or testing geofences) */
-export function simulatePosition(lat = 17.4445, lon = 78.3785): void {
-  console.log(`[Location] Simulating position: lat=${lat}, lon=${lon}`);
-  _handleRawLocation({
-    coords: {
-      latitude: lat,
-      longitude: lon,
-      altitude: null,
-      accuracy: 8,
-      altitudeAccuracy: null,
-      heading: null,
-      speed: null,
-    },
-    timestamp: Date.now(),
-  });
+  // Tier 5: If no GPS fix, send nothing (return null)
+  console.log('[Location] No hardware GPS fix acquired; returning null');
+  return null;
 }
 
 // ── Internal Helpers ──────────────────────────────────────────────────────────
@@ -519,8 +493,6 @@ async function _handleRawLocation(loc: Location.LocationObject): Promise<void> {
   const speed = loc.coords.speed ?? null;
   const heading = loc.coords.heading ?? null;
   const isMock = !!loc.mocked;
-
-  reportLocationSample(isMock);
 
   // 1. Accuracy filter: Accept initial fix unconditionally, reject gross outliers (> 150m) later
   if (_smoothed && acc > MAX_ACCEPTED_ACCURACY_M) {
@@ -585,47 +557,21 @@ async function _handleRawLocation(loc: Location.LocationObject): Promise<void> {
     _lastSubmitTs = now;
     _lastSubmittedPos = { lat: _smoothed.lat, lon: _smoothed.lon };
 
-    if (!_cachedEmployeeId) {
-      await refreshEmployeeSession();
-    }
-
+    // Queue point in local SQLite outbox first (offline-first requirement E.14)
     try {
-      console.log(
-        `[Location] Sending update to backend: lat=${_smoothed.lat.toFixed(5)}, lon=${_smoothed.lon.toFixed(5)}, ` +
-          `acc=±${Math.round(acc)}m, distMoved=${distanceMoved.toFixed(1)}m, emp=${_cachedEmployeeId ?? 'token-fallback'}`
-      );
-
-      const res: any = await mobileApi.submitLocation({
+      await queuePendingLocation({
         latitude: _smoothed.lat,
         longitude: _smoothed.lon,
         accuracy: Math.round(acc),
         speed,
         heading,
         isMock,
-        employeeId: _cachedEmployeeId ?? undefined,
+        recordedAt: new Date(loc.timestamp),
       });
-
-      if (res?.employeeId && res.employeeId !== _cachedEmployeeId) {
-        _cachedEmployeeId = res.employeeId;
-        const raw = await SecureStore.getItemAsync('sologix_user');
-        if (raw) {
-          const user = JSON.parse(raw);
-          user.employeeId = res.employeeId;
-          await SecureStore.setItemAsync('sologix_user', JSON.stringify(user));
-        }
-      }
-
-      console.log('[Location] Backend response:', res?.success ? 'OK (200)' : res);
-    } catch (err: any) {
-      console.warn('[Location] Submit error:', err?.message || err);
-      if (
-        typeof err?.message === 'string' &&
-        (err.message.includes('Employee not found') || err.message.includes('employee not found'))
-      ) {
-        console.log('[Location] Stale employeeId detected; refreshing profile from backend...');
-        _cachedEmployeeId = null;
-        await refreshEmployeeSession();
-      }
+      // Trigger background sync to send batch
+      triggerSync().catch(() => {});
+    } catch (err) {
+      console.warn('[Location] Failed to queue point in outbox:', err);
     }
   }
 }
@@ -664,16 +610,19 @@ export async function startBackgroundTracking(): Promise<void> {
     if (!isRegistered) {
       await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
         accuracy: Location.Accuracy.High,
-        timeInterval: 10_000, // 10 seconds in background
-        distanceInterval: 5, // 5 meters in background
+        timeInterval: 30_000, // 30 seconds interval (Requirement 18)
+        distanceInterval: 10, // 10 meters distance filter (Requirement 18)
         foregroundService: {
           notificationTitle: 'Sologix Energy - Attendance tracking active',
-          notificationBody: 'Sologix Energy - Attendance tracking active',
+          notificationBody: 'Attendance and GPS duty tracking is active',
         },
       });
-      console.log('[Location] Background tracking started');
+      console.log('[Location] Background tracking started (30s interval, 10m filter)');
     }
   } catch (err) {
+    console.warn('[Location] Failed to start background tracking:', err);
+  }
+}
     console.warn('[Location] Failed to start background tracking:', err);
   }
 }

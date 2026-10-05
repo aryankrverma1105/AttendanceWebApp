@@ -175,6 +175,33 @@ export const mobileApi = {
   getGeofences: () =>
     authReq<{ success: boolean; data: Geofence[] }>("/geofences"),
 
+  // Manual Attendance
+  checkIn: (data: {
+    latitude?: number;
+    longitude?: number;
+    accuracy?: number | null;
+    isMock?: boolean;
+    clientEventId: string;
+    clientTimestamp?: string;
+  }) =>
+    authReq<{ success: boolean; message: string; data: any; insideGeofence?: boolean; isLateArrival?: boolean }>("/attendance/check-in", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  checkOut: (data: {
+    latitude?: number;
+    longitude?: number;
+    accuracy?: number | null;
+    isMock?: boolean;
+    clientEventId: string;
+    clientTimestamp?: string;
+  }) =>
+    authReq<{ success: boolean; message: string; data: any }>("/attendance/check-out", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
   // Location
   submitLocation: (data: {
     latitude: number;
@@ -186,6 +213,35 @@ export const mobileApi = {
     employeeId?: string;
   }) =>
     authReq<{ success: boolean }>("/location/update", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  submitBatchLocations: (data: { locations: any[]; employeeId?: string }) =>
+    authReq<{ success: boolean; processedCount: number; acceptedClientPointIds?: string[] }>("/location/batch", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  reportLocationStatus: (data: {
+    state: "LOCATION_OFF" | "PERMISSION_REVOKED" | "LOCATION_ON";
+    at?: string;
+    clientEventId?: string;
+  }) =>
+    authReq<{ success: boolean; message: string }>("/location/status", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  // Admin account creation
+  createEmployee: (data: any) =>
+    authReq<{ success: boolean; user: any; temporaryPassword?: string }>("/employees", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  createAdmin: (data: any) =>
+    authReq<{ success: boolean; user: any; temporaryPassword?: string }>("/admins", {
       method: "POST",
       body: JSON.stringify(data),
     }),

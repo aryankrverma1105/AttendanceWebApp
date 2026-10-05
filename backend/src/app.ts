@@ -35,9 +35,6 @@ app.use(
       // Allow requests with no Origin header (mobile apps, Postman, server-to-server)
       if (!origin) return callback(null, true);
       if (allowedOrigins.includes(origin)) return callback(null, true);
-      // Only when explicitly opted in for local dev — never implicitly via NODE_ENV alone
-      if (process.env.NODE_ENV !== "production" && config.ALLOW_DEV_MODE)
-        return callback(null, true);
       callback(new Error(`CORS: origin ${origin} not allowed`));
     },
     credentials: true,
@@ -45,7 +42,6 @@ app.use(
     allowedHeaders: [
       "Content-Type",
       "Authorization",
-      "x-user-role",
       "x-request-id",
     ],
   }),
@@ -91,9 +87,13 @@ app.get("/api/health", async (_req, res) => {
 // ─── Public Routes (no auth required) ────────────────────────────────────────
 app.use("/api/auth", authRouter);
 
+import { createAdmin } from "./controllers/employee.controller";
+import { requireRole } from "./middleware/auth.middleware";
+
 // ─── Protected Routes (JWT required) ─────────────────────────────────────────
 app.use("/api/users", authorized, userRoute);
 app.use("/api/employees", authorized, employeeRouter);
+app.post("/api/admins", authorized, requireRole("ADMIN"), createAdmin);
 app.use("/api/geofences", authorized, geofenceRouter);
 app.use("/api/location", authorized, locationRouter);
 app.use("/api/attendance", authorized, attendanceRouter);

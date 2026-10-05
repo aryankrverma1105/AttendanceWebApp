@@ -5,10 +5,8 @@ import { NavigationContainer } from "@react-navigation/native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { loadSession } from "./lib/auth";
-// Also registers the background task handler at module top-level (required by expo-task-manager)
-import { requestPermissions } from "./lib/location";
-import { ALLOW_DEV_MODE, checkMockLocationNow, onMockLocationChange } from "./lib/devMode";
+import { loadSession, type UserRole } from "./lib/auth";
+import { initSyncEngine } from "./lib/sync";
 
 // Screens
 import LoginScreen from "./screens/LoginScreen";
@@ -18,7 +16,7 @@ import LeavesScreen from "./screens/LeavesScreen";
 import NotificationsScreen from "./screens/NotificationsScreen";
 import SitesScreen from "./screens/SitesScreen";
 import ProfileScreen from "./screens/ProfileScreen";
-import DevModeBlockedScreen from "./screens/DevModeBlockedScreen";
+import AdminDashboardScreen from "./screens/AdminDashboardScreen";
 
 const Tab = createBottomTabNavigator();
 
@@ -157,39 +155,35 @@ function MainApp({ onLogout }: { onLogout: () => void }) {
 
 export default function App() {
   const [authed, setAuthed] = useState(false);
+  const [role, setRole] = useState<UserRole>("USER");
   const [loading, setLoading] = useState(true);
-  const [devModeBlocked, setDevModeBlocked] = useState(false);
-  const [checkingDevMode, setCheckingDevMode] = useState(false);
 
-  useEffect(() => {
-    // Restore persisted session
-    loadSession().then((session) => {
-      setAuthed(!!session);
-      setLoading(false);
-    });
-  }, []);
-
-  const checkDevModeGate = useCallback(async () => {
-    if (ALLOW_DEV_MODE) {
-      setDevModeBlocked(false);
-      return;
-    }
-    setCheckingDevMode(true);
+  const checkAuth = useCallback(async () => {
     try {
-      await requestPermissions();
-      const mocked = await checkMockLocationNow();
-      setDevModeBlocked(mocked);
+      const session = await loadSession();
+      if (session) {
+        setAuthed(true);
+        setRole(session.user?.role === "ADMIN" ? "ADMIN" : "USER");
+      } else {
+        setAuthed(false);
+      }
+    } catch {
+      setAuthed(false);
     } finally {
-      setCheckingDevMode(false);
+      setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    if (!authed || ALLOW_DEV_MODE) return;
-    checkDevModeGate();
-    // Keep listening for mock locations turned on mid-session (tracking runs continuously).
-    return onMockLocationChange(setDevModeBlocked);
-  }, [authed, checkDevModeGate]);
+    checkAuth();
+  }, [checkAuth]);
+
+  useEffect(() => {
+    if (authed) {
+      const cleanup = initSyncEngine();
+      return cleanup;
+    }
+  }, [authed]);
 
   if (loading) {
     return (
@@ -209,24 +203,22 @@ export default function App() {
     return (
       <SafeAreaProvider>
         <StatusBar barStyle="dark-content" backgroundColor="#FFFBF0" />
-        <LoginScreen onLogin={() => setAuthed(true)} />
+        <LoginScreen onLogin={checkAuth} />
       </SafeAreaProvider>
     );
   }
 
-  if (!ALLOW_DEV_MODE && devModeBlocked) {
+  // Requirement H.22: If role is ADMIN, show an admin interface and NO check-in or tracking.
+  if (role === "ADMIN") {
     return (
       <SafeAreaProvider>
         <StatusBar barStyle="dark-content" backgroundColor="#FFFBF0" />
-        <DevModeBlockedScreen
-          checking={checkingDevMode}
-          onRetry={checkDevModeGate}
-          onLogout={() => setAuthed(false)}
-        />
+        <AdminDashboardScreen onLogout={() => setAuthed(false)} />
       </SafeAreaProvider>
     );
   }
 
+  // If role is USER, show the user duty and attendance screens
   return (
     <SafeAreaProvider>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFBF0" />
