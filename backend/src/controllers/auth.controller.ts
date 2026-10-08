@@ -101,9 +101,14 @@ export async function loginUser(req: Request, res: Response) {
     // ADMIN accounts never get an employee record, attendance, or tracking.
 
     const deviceId = resolveDeviceFingerprint(req);
-    const conflict = await assertNoConflictingSession(user.id, deviceId);
-    if (conflict.blocked) {
-      return res.status(409).json({ success: false, code: "DEVICE_CONFLICT", message: conflict.message });
+    if (user.role === "ADMIN") {
+      // Admins are exempt from device conflict lockouts — automatically rotate/revoke previous sessions
+      await revokeAllUserSessions(user.id);
+    } else {
+      const conflict = await assertNoConflictingSession(user.id, deviceId);
+      if (conflict.blocked) {
+        return res.status(409).json({ success: false, code: "DEVICE_CONFLICT", message: conflict.message });
+      }
     }
 
     const tokenPayload = {
