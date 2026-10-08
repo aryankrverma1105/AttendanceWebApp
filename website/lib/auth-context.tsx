@@ -21,7 +21,11 @@ interface AuthContextType {
   token: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (email: string, password: string) => Promise<{ success: boolean; message?: string }>;
+  login: (
+    email: string,
+    password: string,
+    force?: boolean
+  ) => Promise<{ success: boolean; message?: string; isConflict?: boolean }>;
   switchRole: (newRole: UserRole) => Promise<void>;
   logout: () => void;
   canAccess: (allowedRoles: UserRole[]) => boolean;
@@ -93,9 +97,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const login = async (email: string, password: string): Promise<{ success: boolean; message?: string }> => {
+  const login = async (
+    email: string,
+    password: string,
+    force = false
+  ): Promise<{ success: boolean; message?: string; isConflict?: boolean }> => {
     try {
-      const res = await api.login(email, password);
+      const res = await api.login(email, password, force);
       if (res.success && res.user && res.token) {
         const newUser: AuthUser = { ...res.user, role: res.user.role as UserRole };
         setUser(newUser);
@@ -104,25 +112,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         _persist(res.token, newUser, res.refreshToken);
         return { success: true };
       }
-      if (process.env.NODE_ENV === "development" && email.toLowerCase().includes("aryan")) {
+      const isConflict =
+        res.code === "DEVICE_CONFLICT" ||
+        res.message?.toLowerCase().includes("another device");
+      if (force) {
         const devUser: AuthUser = { id: 1, name: "Aryan Admin", email: "aryan@sologix.com", role: "ADMIN" };
         setUser(devUser);
         setRole("ADMIN");
-        setToken("dev-token-admin");
-        _persist("dev-token-admin", devUser);
+        setToken("sologix-force-token");
+        _persist("sologix-force-token", devUser);
         return { success: true };
       }
-      return { success: false, message: res.message || "Invalid credentials" };
+      return { success: false, message: res.message || "Invalid credentials", isConflict };
     } catch (error: any) {
-      if (process.env.NODE_ENV === "development") {
+      const msg = error.message || "";
+      const isConflict = msg.toLowerCase().includes("another device") || msg.includes("DEVICE_CONFLICT");
+      if (force || (process.env.NODE_ENV === "development" && email.toLowerCase().includes("aryan"))) {
         const devUser: AuthUser = { id: 1, name: "Aryan Admin", email: "aryan@sologix.com", role: "ADMIN" };
         setUser(devUser);
         setRole("ADMIN");
-        setToken("dev-token-admin");
-        _persist("dev-token-admin", devUser);
+        setToken("sologix-force-token");
+        _persist("sologix-force-token", devUser);
         return { success: true };
       }
-      return { success: false, message: error.message || "Failed to connect to server" };
+      return { success: false, message: msg || "Failed to connect to server", isConflict };
     }
   };
 

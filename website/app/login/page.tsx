@@ -25,9 +25,10 @@ export default function LoginPage() {
   const [password, setPassword] = useState("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [isConflict, setIsConflict] = useState(false)
   const [success, setSuccess] = useState(false)
 
-  const handleLogin = async (e?: React.FormEvent) => {
+  const handleLogin = async (e?: React.FormEvent, force = false) => {
     if (e) e.preventDefault()
     if (!email || !password) {
       setError("Please enter both email and password.")
@@ -37,15 +38,17 @@ export default function LoginPage() {
     setLoading(true)
     setError(null)
 
-    const res = await login(email, password)
+    const res = await login(email, password, force)
     setLoading(false)
 
     if (res.success) {
+      setIsConflict(false)
       setSuccess(true)
       setTimeout(() => {
         router.push("/")
       }, 500)
     } else {
+      setIsConflict(Boolean(res.isConflict || res.message?.toLowerCase().includes("another device")))
       setError(res.message || "Invalid email or password.")
     }
   }
@@ -164,7 +167,21 @@ export default function LoginPage() {
                 <Alert variant="destructive">
                   <AlertCircle className="h-4 w-4" />
                   <AlertTitle>Authentication Failed</AlertTitle>
-                  <AlertDescription className="text-xs">{error}</AlertDescription>
+                  <AlertDescription className="text-xs space-y-2">
+                    <p>{error}</p>
+                    {isConflict && (
+                      <div className="pt-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="w-full bg-[#D97706] hover:bg-[#B45309] text-white font-semibold text-xs shadow-sm h-8"
+                          onClick={() => handleLogin(undefined, true)}
+                        >
+                          Sign In &amp; Disconnect Other Session
+                        </Button>
+                      </div>
+                    )}
+                  </AlertDescription>
                 </Alert>
               )}
 

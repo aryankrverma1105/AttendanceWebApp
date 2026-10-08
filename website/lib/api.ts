@@ -230,10 +230,10 @@ export const api = {
   getNotifications: () => fetchApi("/notifications"),
 
   // Auth
-  login: (email: string, password: string) =>
+  login: (email: string, password: string, force = false) =>
     fetchApi("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ email, password, deviceId: getDeviceId() }),
+      body: JSON.stringify({ email, password, deviceId: getDeviceId(), force }),
     }),
   demoLogin: (role: string) =>
     fetchApi("/auth/demo-login", {

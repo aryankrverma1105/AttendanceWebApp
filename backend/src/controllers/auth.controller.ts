@@ -100,9 +100,10 @@ export async function loginUser(req: Request, res: Response) {
     // Only USER accounts get an Employee record, created explicitly by an ADMIN.
     // ADMIN accounts never get an employee record, attendance, or tracking.
 
+    const force = Boolean(req.body?.force) || req.query?.force === "true";
     const deviceId = resolveDeviceFingerprint(req);
-    if (user.role === "ADMIN") {
-      // Admins are exempt from device conflict lockouts — automatically rotate/revoke previous sessions
+    if (user.role === "ADMIN" || force) {
+      // Admins or users requesting force login automatically revoke previous sessions
       await revokeAllUserSessions(user.id);
     } else {
       const conflict = await assertNoConflictingSession(user.id, deviceId);
