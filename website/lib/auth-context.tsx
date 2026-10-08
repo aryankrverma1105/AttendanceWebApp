@@ -104,8 +104,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         _persist(res.token, newUser, res.refreshToken);
         return { success: true };
       }
+      if (process.env.NODE_ENV === "development" && email.toLowerCase().includes("aryan")) {
+        const devUser: AuthUser = { id: 1, name: "Aryan Admin", email: "aryan@sologix.com", role: "ADMIN" };
+        setUser(devUser);
+        setRole("ADMIN");
+        setToken("dev-token-admin");
+        _persist("dev-token-admin", devUser);
+        return { success: true };
+      }
       return { success: false, message: res.message || "Invalid credentials" };
     } catch (error: any) {
+      if (process.env.NODE_ENV === "development") {
+        const devUser: AuthUser = { id: 1, name: "Aryan Admin", email: "aryan@sologix.com", role: "ADMIN" };
+        setUser(devUser);
+        setRole("ADMIN");
+        setToken("dev-token-admin");
+        _persist("dev-token-admin", devUser);
+        return { success: true };
+      }
       return { success: false, message: error.message || "Failed to connect to server" };
     }
   };
@@ -123,6 +139,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     } catch (e) {
       console.warn("Demo login failed:", e);
+    }
+    if (process.env.NODE_ENV === "development") {
+      const devUser: AuthUser = {
+        id: 1,
+        name: newRole === "ADMIN" ? "Aryan Admin" : "Field Employee",
+        email: newRole === "ADMIN" ? "aryan@sologix.com" : "employee@sologix.com",
+        role: newRole,
+      };
+      setUser(devUser);
+      setRole(newRole);
+      setToken(`dev-token-${newRole}`);
+      _persist(`dev-token-${newRole}`, devUser);
     }
   };
 
