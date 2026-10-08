@@ -11,21 +11,8 @@
 
 import { AppState, Platform } from 'react-native';
 import * as Location from 'expo-location';
-import * as Notifications from 'expo-notifications';
 import { queuePendingEvent, generateUUID } from './outbox';
 import { triggerSync } from './sync';
-
-// Configure notification behavior
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-    shouldShowBanner: true,
-    shouldShowList: true,
-    priority: Notifications.AndroidNotificationPriority.HIGH,
-  }),
-});
 
 export type LocationWatchdogState = {
   isLocationOff: boolean;
@@ -37,11 +24,8 @@ type WatchdogListener = (state: LocationWatchdogState) => void;
 const listeners = new Set<WatchdogListener>();
 let currentState: LocationWatchdogState = { isLocationOff: false, reason: 'OK' };
 let intervalTimer: ReturnType<typeof setInterval> | null = null;
-let lastNotificationTs = 0;
 let lastReportedState: 'LOCATION_OFF' | 'PERMISSION_REVOKED' | 'LOCATION_ON' = 'LOCATION_ON';
 let isCheckedInActive = false;
-
-const NOTIFICATION_REPEAT_MS = 5 * 60 * 1000; // 5 minutes
 
 export function onWatchdogStatusChange(cb: WatchdogListener): () => void {
   listeners.add(cb);
@@ -58,28 +42,6 @@ function updateState(newState: LocationWatchdogState) {
       console.error('[Watchdog] listener error:', e);
     }
   });
-}
-
-async function showLocalAlertNotification(message: string) {
-  const now = Date.now();
-  if (now - lastNotificationTs < NOTIFICATION_REPEAT_MS) {
-    return;
-  }
-  lastNotificationTs = now;
-
-  try {
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: 'Action Required: Location is OFF',
-        body: message,
-        data: { type: 'LOCATION_OFF_ALERT' },
-        sound: true,
-      },
-      trigger: null, // deliver immediately
-    });
-  } catch (err) {
-    console.warn('[Watchdog] Failed to show local notification:', err);
-  }
 }
 
 export async function evaluateLocationStatus(isUserCheckedIn: boolean): Promise<LocationWatchdogState> {
