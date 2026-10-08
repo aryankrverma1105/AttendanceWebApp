@@ -41,7 +41,7 @@ export function GeofenceMapEditor({
     if (!containerRef.current || mapRef.current) return;
 
     const map = L.map(containerRef.current, {
-      center: [latitude || 17.4445, longitude || 78.3785],
+      center: [latitude || 23.3441, longitude || 85.3096], // Ranchi, Jharkhand
       zoom: 15,
       zoomControl: false,
     });

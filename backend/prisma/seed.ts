@@ -84,10 +84,10 @@ async function main() {
     data: {
       name: "Main Corporate HQ",
       type: "OFFICE",
-      latitude: 17.4485,
-      longitude: 78.3768,
+      latitude: 23.3441,
+      longitude: 85.3096,
       radiusMeters: 250,
-      address: "HITEC City, Hyderabad, Telangana",
+      address: "Main Road, Ranchi, Jharkhand",
       active: true,
     },
   });
@@ -96,10 +96,10 @@ async function main() {
     data: {
       name: "Customer Site A - Nexus Tech",
       type: "CUSTOMER_SITE",
-      latitude: 17.4435,
-      longitude: 78.3820,
+      latitude: 23.3550,
+      longitude: 85.3250,
       radiusMeters: 200,
-      address: "Cyber Towers Area, Hyderabad",
+      address: "Kanke Road, Ranchi, Jharkhand",
       active: true,
     },
   });
@@ -108,10 +108,10 @@ async function main() {
     data: {
       name: "Field Site West Substation",
       type: "FIELD_SITE",
-      latitude: 17.4350,
-      longitude: 78.3650,
+      latitude: 23.3300,
+      longitude: 85.2950,
       radiusMeters: 300,
-      address: "Kondapur Hub, Hyderabad",
+      address: "Harmu Housing Colony, Ranchi, Jharkhand",
       active: true,
     },
   });
@@ -120,10 +120,10 @@ async function main() {
     data: {
       name: "Approved Remote Workspace",
       type: "REMOTE",
-      latitude: 17.4500,
-      longitude: 78.3900,
+      latitude: 23.3600,
+      longitude: 85.3400,
       radiusMeters: 150,
-      address: "Madhapur, Hyderabad",
+      address: "Morabadi, Ranchi, Jharkhand",
       active: true,
     },
   });

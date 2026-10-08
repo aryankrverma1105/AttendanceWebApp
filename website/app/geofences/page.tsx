@@ -30,10 +30,10 @@ import {
 const DEFAULT_FORM = {
   name: "",
   type: "CUSTOMER_SITE",
-  latitude: 17.4435,
-  longitude: 78.382,
+  latitude: 23.3441,
+  longitude: 85.3096,
   radiusMeters: 50,
-  address: "",
+  address: "Main Road, Ranchi, Jharkhand",
 };
 
 export default function GeofencesPage() {

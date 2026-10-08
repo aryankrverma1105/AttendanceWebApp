@@ -39,7 +39,7 @@ export function LiveMap({ geofences, employees, selectedEmployeeId, onSelectEmpl
     if (!mapContainerRef.current || mapInstanceRef.current) return;
 
     const map = L.map(mapContainerRef.current, {
-      center: [17.4445, 78.3785],
+      center: [23.3441, 85.3096], // Ranchi, Jharkhand
       zoom: 13,
       zoomControl: false,
     });
