@@ -79,10 +79,6 @@ export async function evaluateLocationStatus(isUserCheckedIn: boolean): Promise<
 
   updateState({ isLocationOff: isOff, reason });
 
-  if (isOff) {
-    showLocalAlertNotification('Your location is OFF. Please turn it on to ensure duty verification.');
-  }
-
   // If status changed, queue status event in SQLite outbox
   if (determinedState !== lastReportedState) {
     lastReportedState = determinedState;
