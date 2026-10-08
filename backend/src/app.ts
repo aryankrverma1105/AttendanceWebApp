@@ -34,7 +34,21 @@ app.use(
     origin: (origin, callback) => {
       // Allow requests with no Origin header (mobile apps, Postman, server-to-server)
       if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin)) return callback(null, true);
+      if (allowedOrigins.includes("*") || allowedOrigins.includes(origin)) return callback(null, true);
+
+      // Match if same hostname / IP regardless of custom port
+      try {
+        const originUrl = new URL(origin);
+        const matchesHost = allowedOrigins.some((allowed) => {
+          try {
+            return new URL(allowed).hostname === originUrl.hostname;
+          } catch {
+            return false;
+          }
+        });
+        if (matchesHost) return callback(null, true);
+      } catch {}
+
       callback(new Error(`CORS: origin ${origin} not allowed`));
     },
     credentials: true,
