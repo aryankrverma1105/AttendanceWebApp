@@ -4,20 +4,20 @@
     "slug": "sologix-energy",
     "version": "1.0.0",
     "description": "Sologix Energy - Powering Attendance with the Sun",
-
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "extra": {
       "apiBase": "http://34.180.17.0:8088/api",
       "cartoApiKey": "cb1_49bx_1_059a6bc15b7f8fdbb1fe7cb1",
-      "mapTileUrl": "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=cb1_49bx_1_059a6bc15b7f8fdbb1fe7cb1"
+      "mapTileUrl": "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=cb1_49bx_1_059a6bc15b7f8fdbb1fe7cb1",
+      "eas": {
+        "projectId": "757a8e36-b141-4854-97af-ad3c08369396"
+      }
     },
-
     "experiments": {
       "tsconfigPaths": true
     },
-
     "plugins": [
       [
         "expo-splash-screen",
@@ -38,13 +38,12 @@
         }
       ]
     ],
-
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-
     "userInterfaceStyle": "light",
-
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.sologix.energy"
@@ -59,7 +58,12 @@
         "FOREGROUND_SERVICE",
         "FOREGROUND_SERVICE_LOCATION",
         "POST_NOTIFICATIONS",
-        "RECEIVE_BOOT_COMPLETED"
+        "RECEIVE_BOOT_COMPLETED",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION"
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
