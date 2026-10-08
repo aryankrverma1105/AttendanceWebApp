@@ -36,7 +36,9 @@
           "isIosBackgroundLocationEnabled": true,
           "isAndroidBackgroundLocationEnabled": true
         }
-      ]
+      ],
+      "expo-font",
+      "expo-sqlite"
     ],
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -50,7 +52,6 @@
     },
     "android": {
       "package": "com.sologix.energy",
-      "usesCleartextTraffic": true,
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
@@ -68,10 +69,6 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#FFFBF0"
-      },
-      "navigationBar": {
-        "backgroundColor": "#FFFBF0",
-        "barStyle": "dark-content"
       }
     }
   }
