@@ -4,7 +4,6 @@
     "slug": "sologix-energy",
     "version": "1.0.0",
     "description": "Sologix Energy - Powering Attendance with the Sun",
-    "owner": "aryan-kumar-verma",
 
     "web": {
       "favicon": "./assets/favicon.png"
