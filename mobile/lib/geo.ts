@@ -7,6 +7,16 @@ export const WGS84_F = 1 / 298.257223563; // flattening
 export const WGS84_B = 6356752.314245; // semi-minor axis in meters
 
 /**
+ * Carto Raster Map Basemap Configuration with Authenticated API Key
+ */
+export const CARTO_API_KEY =
+  process.env.EXPO_PUBLIC_CARTO_API_KEY || "cb1_49bx_1_059a6bc15b7f8fdbb1fe7cb1";
+
+export const CARTO_TILE_URL =
+  `https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=${CARTO_API_KEY}`;
+
+
+/**
  * Calculates high-precision geodesic distance on the WGS-84 ellipsoid
  * Using Vincenty's inverse formula. Sub-millimeter accuracy.
  */

@@ -9,6 +9,10 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
+    "extra": {
+      "cartoApiKey": "cb1_49bx_1_059a6bc15b7f8fdbb1fe7cb1",
+      "mapTileUrl": "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=cb1_49bx_1_059a6bc15b7f8fdbb1fe7cb1"
+    },
 
     "experiments": {
       "tsconfigPaths": true

@@ -48,9 +48,11 @@ export function GeofenceMapEditor({
 
     L.control.zoom({ position: "bottomright" }).addTo(map);
 
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
+    const cartoKey = process.env.NEXT_PUBLIC_CARTO_API_KEY || "cb1_49bx_1_059a6bc15b7f8fdbb1fe7cb1";
+    L.tileLayer(`https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key=${cartoKey}`, {
       attribution: "&copy; CARTO, OpenStreetMap",
       maxZoom: 19,
+      subdomains: "abcd",
     }).addTo(map);
 
     mapRef.current = map;
