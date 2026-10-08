@@ -9,8 +9,8 @@
     },
     "extra": {
       "apiBase": "http://34.180.17.0:8088/api",
-      "cartoApiKey": "cb1_49bx_1_059a6bc15b7f8fdbb1fe7cb1",
-      "mapTileUrl": "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=cb1_49bx_1_059a6bc15b7f8fdbb1fe7cb1",
+      "cartoApiKey": "cb1_4e5f_1_4f7d31c7b00835a4b92885e3",
+      "mapTileUrl": "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=cb1_4e5f_1_4f7d31c7b00835a4b92885e3",
       "eas": {
         "projectId": "757a8e36-b141-4854-97af-ad3c08369396"
       }

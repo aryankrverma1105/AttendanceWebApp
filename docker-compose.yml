@@ -60,7 +60,7 @@ services:
       NODE_ENV: production
       TZ: Asia/Kolkata
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api}
-      NEXT_PUBLIC_CARTO_API_KEY: ${NEXT_PUBLIC_CARTO_API_KEY:-cb1_49bx_1_059a6bc15b7f8fdbb1fe7cb1}
+      NEXT_PUBLIC_CARTO_API_KEY: ${NEXT_PUBLIC_CARTO_API_KEY:-cb1_4e5f_1_4f7d31c7b00835a4b92885e3}
     networks:
       - sologix_net
 
