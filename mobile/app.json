@@ -10,6 +10,7 @@
       "favicon": "./assets/favicon.png"
     },
     "extra": {
+      "apiBase": "http://34.180.17.0:8088/api",
       "cartoApiKey": "cb1_49bx_1_059a6bc15b7f8fdbb1fe7cb1",
       "mapTileUrl": "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=cb1_49bx_1_059a6bc15b7f8fdbb1fe7cb1"
     },
