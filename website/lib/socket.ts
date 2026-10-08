@@ -5,9 +5,9 @@ const getSocketUrl = (): string => {
     return process.env.NEXT_PUBLIC_SOCKET_URL;
   }
   if (typeof window !== "undefined") {
-    return `${window.location.protocol}//${window.location.hostname}:3000`;
+    return window.location.origin;
   }
-  return "http://localhost:3000";
+  return "http://localhost:5000";
 };
 
 let socket: Socket | null = null;
