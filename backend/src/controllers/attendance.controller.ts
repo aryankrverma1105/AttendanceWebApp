@@ -29,7 +29,32 @@ async function notifyAdminsOfMock(employeeName: string, eventType: string, coord
   }
 }
 
+async function notifyAdminsOfLargeClockSkew(employeeName: string, eventType: string, diffHours: number) {
+  try {
+    const admins = await prisma.user.findMany({ where: { role: "ADMIN" } });
+    for (const admin of admins) {
+      await prisma.notification.create({
+        data: {
+          recipientUserId: admin.id,
+          type: "ANOMALY",
+          title: "Large Clock Difference",
+          message: `Large clock difference detected for ${employeeName} during ${eventType}: approx ${diffHours}h offset between device and server.`,
+        },
+      });
+    }
+    broadcastEvent("anomaly.detected", {
+      employeeName,
+      reason: "LARGE_CLOCK_SKEW",
+      eventType,
+      diffHours,
+    });
+  } catch (err) {
+    console.error("[Attendance] Failed to notify admins of clock difference:", err);
+  }
+}
+
 export async function checkIn(req: Request, res: Response) {
+
   try {
     const authRole = ((req as any).user?.role || "").toUpperCase();
     const userId = (req as any).user?.userId;
@@ -60,8 +85,43 @@ export async function checkIn(req: Request, res: Response) {
       return res.status(404).json({ success: false, message: "Employee profile not found" });
     }
 
-    const checkInTime = clientTimestamp ? new Date(clientTimestamp) : new Date();
+    // ─── Clock Skew Validation (Requirement 5) ───────────────────────────────
+    const serverNow = new Date();
+    const receivedAt = serverNow;
+    let checkInTime: Date = serverNow;
+    let clockSkewSeconds: number | null = null;
+    let largeSkewNote: string | null = null;
+
+    if (clientTimestamp) {
+      const clientTime = new Date(clientTimestamp);
+      if (isNaN(clientTime.getTime())) {
+        return res.status(400).json({ success: false, message: "Invalid clientTimestamp" });
+      }
+
+      const diffMs = clientTime.getTime() - serverNow.getTime(); // positive if in future
+      clockSkewSeconds = Math.round(diffMs / 1000);
+
+      // Reject (HTTP 400) any clientTimestamp more than 5 minutes in the FUTURE
+      if (diffMs > 5 * 60 * 1000) {
+        return res.status(400).json({
+          success: false,
+          message: "clientTimestamp is more than 5 minutes in the future",
+        });
+      }
+
+      // Past time or within 5m future is kept as official time
+      checkInTime = clientTime;
+
+      // If difference between server receive time and clientTimestamp is more than 24 hours
+      if (Math.abs(diffMs) > 24 * 60 * 60 * 1000) {
+        const diffHours = Math.round(Math.abs(diffMs) / (60 * 60 * 1000));
+        largeSkewNote = `Large clock difference: ~${diffHours}h offset`;
+        await notifyAdminsOfLargeClockSkew(employee.user.name || employee.employeeCode, "CHECK_IN", diffHours);
+      }
+    }
+
     const workDate = getWorkDateIST(checkInTime);
+
 
     // 1. Idempotency check on ProcessedClientEvent
     const alreadyProcessed = await prisma.processedClientEvent.findUnique({
@@ -96,14 +156,18 @@ export async function checkIn(req: Request, res: Response) {
     });
 
     if (existingAttendance && existingAttendance.status === "WORKING" && !existingAttendance.checkOutAt) {
-      // Record clientEventId so future retries are also idempotent
-      await prisma.processedClientEvent.create({
-        data: {
-          clientEventId,
-          eventType: "CHECK_IN",
-          employeeId: employee.id,
-        },
-      });
+      // Record clientEventId so future retries are also idempotent (race-safe)
+      try {
+        await prisma.processedClientEvent.create({
+          data: {
+            clientEventId,
+            eventType: "CHECK_IN",
+            employeeId: employee.id,
+          },
+        });
+      } catch (e: any) {
+        if (e?.code !== "P2002") throw e;
+      }
 
       return res.status(200).json({
         success: true,
@@ -178,6 +242,9 @@ export async function checkIn(req: Request, res: Response) {
         isLateArrival: isLate,
         workingMinutes: 0,
         breakMinutes: 0,
+        clockSkewSeconds,
+        receivedAt,
+        notes: largeSkewNote || null,
       },
       update: {
         checkInAt: existingAttendance?.checkInAt || checkInTime,
@@ -186,6 +253,9 @@ export async function checkIn(req: Request, res: Response) {
         checkOutAt: null,
         checkOutType: null,
         status: "WORKING",
+        clockSkewSeconds,
+        receivedAt,
+        notes: [existingAttendance?.notes, largeSkewNote].filter(Boolean).join("; ") || null,
       },
     });
 
@@ -205,14 +275,27 @@ export async function checkIn(req: Request, res: Response) {
       },
     });
 
-    // 8. Record ProcessedClientEvent
-    await prisma.processedClientEvent.create({
-      data: {
-        clientEventId,
-        eventType: "CHECK_IN",
-        employeeId: employee.id,
-      },
-    });
+    // 8. Record ProcessedClientEvent (Race-safe against P2002)
+    try {
+      await prisma.processedClientEvent.create({
+        data: {
+          clientEventId,
+          eventType: "CHECK_IN",
+          employeeId: employee.id,
+        },
+      });
+    } catch (e: any) {
+      if (e?.code === "P2002") {
+        return res.status(200).json({
+          success: true,
+          message: "Event already processed",
+          data: attendance,
+          duplicate: true,
+        });
+      }
+      throw e;
+    }
+
 
     // 9. Broadcast socket events
     const empName = employee.user.name || employee.user.username;
@@ -276,7 +359,40 @@ export async function checkOut(req: Request, res: Response) {
       return res.status(404).json({ success: false, message: "Employee profile not found" });
     }
 
-    const checkOutTime = clientTimestamp ? new Date(clientTimestamp) : new Date();
+    // ─── Clock Skew Validation (Requirement 5) ───────────────────────────────
+    const serverNow = new Date();
+    const receivedAt = serverNow;
+    let checkOutTime: Date = serverNow;
+    let clockSkewSeconds: number | null = null;
+    let largeSkewNote: string | null = null;
+
+    if (clientTimestamp) {
+      const clientTime = new Date(clientTimestamp);
+      if (isNaN(clientTime.getTime())) {
+        return res.status(400).json({ success: false, message: "Invalid clientTimestamp" });
+      }
+
+      const diffMs = clientTime.getTime() - serverNow.getTime(); // positive if in future
+      clockSkewSeconds = Math.round(diffMs / 1000);
+
+      // Reject (HTTP 400) any clientTimestamp more than 5 minutes in the FUTURE
+      if (diffMs > 5 * 60 * 1000) {
+        return res.status(400).json({
+          success: false,
+          message: "clientTimestamp is more than 5 minutes in the future",
+        });
+      }
+
+      checkOutTime = clientTime;
+
+      // If difference between server receive time and clientTimestamp is more than 24 hours
+      if (Math.abs(diffMs) > 24 * 60 * 60 * 1000) {
+        const diffHours = Math.round(Math.abs(diffMs) / (60 * 60 * 1000));
+        largeSkewNote = `Large clock difference: ~${diffHours}h offset`;
+        await notifyAdminsOfLargeClockSkew(employee.user.name || employee.employeeCode, "CHECK_OUT", diffHours);
+      }
+    }
+
     const workDate = getWorkDateIST(checkOutTime);
 
     // 1. Idempotency check on ProcessedClientEvent
@@ -330,22 +446,39 @@ export async function checkOut(req: Request, res: Response) {
       });
     }
 
+    // ─── Requirement 1: Manual checkout after AUTO_9PM ───────────────────────
+    let isCorrectingAutoCheckout = false;
     if (attendance.checkOutAt && attendance.status !== "WORKING") {
-      // Already checked out
-      await prisma.processedClientEvent.create({
-        data: {
-          clientEventId,
-          eventType: "CHECK_OUT",
-          employeeId: employee.id,
-        },
-      });
+      const isAutoClosed = attendance.checkOutType === "AUTO_9PM";
+      const canCorrect =
+        isAutoClosed &&
+        attendance.checkInAt &&
+        checkOutTime.getTime() < attendance.checkOutAt.getTime() &&
+        checkOutTime.getTime() > attendance.checkInAt.getTime();
 
-      return res.status(200).json({
-        success: true,
-        message: "Already checked out",
-        data: attendance,
-        alreadyCheckedOut: true,
-      });
+      if (canCorrect) {
+        isCorrectingAutoCheckout = true;
+      } else {
+        // Already checked out and not correcting auto checkout
+        try {
+          await prisma.processedClientEvent.create({
+            data: {
+              clientEventId,
+              eventType: "CHECK_OUT",
+              employeeId: employee.id,
+            },
+          });
+        } catch (e: any) {
+          if (e?.code !== "P2002") throw e;
+        }
+
+        return res.status(200).json({
+          success: true,
+          message: "Already checked out",
+          data: attendance,
+          alreadyCheckedOut: true,
+        });
+      }
     }
 
     // 3. Mock location flag & admin notification
@@ -381,7 +514,13 @@ export async function checkOut(req: Request, res: Response) {
       }
     }
 
-    // 5. Update Attendance
+    // 5. Update Attendance (Overwrite if correcting from AUTO_9PM)
+    const notesParts = [
+      attendance.notes,
+      isCorrectingAutoCheckout ? "Corrected from auto checkout by offline check-out" : null,
+      largeSkewNote,
+    ].filter(Boolean);
+
     const updatedAttendance = await prisma.attendance.update({
       where: { id: attendance.id },
       data: {
@@ -393,6 +532,9 @@ export async function checkOut(req: Request, res: Response) {
         workingMinutes,
         overtimeMinutes,
         isEarlyDeparture: isEarly,
+        clockSkewSeconds,
+        receivedAt,
+        notes: notesParts.length > 0 ? notesParts.join("; ") : null,
       },
     });
 
@@ -411,14 +553,26 @@ export async function checkOut(req: Request, res: Response) {
       },
     });
 
-    // 7. Record ProcessedClientEvent
-    await prisma.processedClientEvent.create({
-      data: {
-        clientEventId,
-        eventType: "CHECK_OUT",
-        employeeId: employee.id,
-      },
-    });
+    // 7. Record ProcessedClientEvent (Race-safe against P2002)
+    try {
+      await prisma.processedClientEvent.create({
+        data: {
+          clientEventId,
+          eventType: "CHECK_OUT",
+          employeeId: employee.id,
+        },
+      });
+    } catch (e: any) {
+      if (e?.code === "P2002") {
+        return res.status(200).json({
+          success: true,
+          message: "Event already processed",
+          data: updatedAttendance,
+          duplicate: true,
+        });
+      }
+      throw e;
+    }
 
     // 8. Broadcast socket events
     const empName = employee.user.name || employee.user.username;
@@ -444,9 +598,13 @@ export async function checkOut(req: Request, res: Response) {
       data: updatedAttendance,
     });
   } catch (error: any) {
+    if (error?.code === "P2002") {
+      return res.status(200).json({ success: true, message: "Event already processed", duplicate: true });
+    }
     console.error("[Attendance] check-out error:", error);
     return res.status(500).json({ success: false, message: error.message });
   }
+
 }
 
 export async function getAttendanceRecords(req: Request, res: Response) {

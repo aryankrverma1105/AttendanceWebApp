@@ -623,9 +623,7 @@ export async function startBackgroundTracking(): Promise<void> {
     console.warn('[Location] Failed to start background tracking:', err);
   }
 }
-    console.warn('[Location] Failed to start background tracking:', err);
-  }
-}
+
 
 /** Stop background tracking. */
 export async function stopBackgroundTracking(): Promise<void> {

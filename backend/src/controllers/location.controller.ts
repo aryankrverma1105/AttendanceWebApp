@@ -67,7 +67,7 @@ export async function submitBatchLocations(req: Request, res: Response) {
     }
 
     const result = await processBatchLocations(targetEmployeeId || String(authUserId), locations, authUserId);
-    return res.status(200).json({ success: true, ...result });
+    return res.status(200).json(result);
   } catch (error: any) {
     return res.status(500).json({ success: false, message: error.message });
   }

@@ -43,11 +43,10 @@ export function get2100IST(workDate: string): Date {
   return new Date(`${workDate}T21:00:00+05:30`);
 }
 
-/**
- * Calculates working minutes between checkInAt and checkOutAt.
- */
-export function calculateWorkingMinutes(checkInAt: Date, checkOutAt: Date): number {
+export function calculateWorkingMinutes(checkInAt: Date, checkOutAt: Date, breakMinutes: number = 0): number {
   const diffMs = checkOutAt.getTime() - checkInAt.getTime();
   if (diffMs <= 0) return 0;
-  return Math.floor(diffMs / (1000 * 60));
+  const minutes = Math.floor(diffMs / (1000 * 60));
+  return Math.max(0, minutes - breakMinutes);
 }
+

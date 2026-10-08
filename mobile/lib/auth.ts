@@ -76,7 +76,7 @@ export async function getDeviceId(): Promise<string> {
   }
 }
 
-export type UserRole = "ADMIN" | "MANAGER" | "EMPLOYEE";
+export type UserRole = "ADMIN" | "USER" | "MANAGER" | "EMPLOYEE";
 
 export interface StoredUser {
   id: string;
@@ -255,9 +255,13 @@ export async function apiRequest<T = any>(
   const data = await res.json();
 
   if (!res.ok) {
-    throw new Error(data.error ?? data.message ?? `HTTP ${res.status}`);
+    const error: any = new Error(data.error ?? data.message ?? `HTTP ${res.status}`);
+    error.status = res.status;
+    error.data = data;
+    throw error;
   }
   return data as T;
+
 }
 
 // ─── Auth API ─────────────────────────────────────────────────────────────────

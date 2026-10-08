@@ -149,6 +149,26 @@ export async function processLocationUpdate(
     },
   });
 
+  // Requirement 4: Clear NO_SIGNAL if point is newest and recent (within last 10 mins)
+  const nowMs = Date.now();
+  const isRecent = (nowMs - recordedAt.getTime()) <= 10 * 60 * 1000 && recordedAt.getTime() <= nowMs + 60000;
+  const isNewest = !employee.lastLocationUpdate || recordedAt.getTime() >= employee.lastLocationUpdate.getTime();
+
+  let shouldRestoreWorking = false;
+  if (employee.currentStatus === "NO_SIGNAL" && isRecent && isNewest) {
+    const openAttendance = await prisma.attendance.findFirst({
+      where: {
+        employeeId: employee.id,
+        checkInAt: { not: null },
+        checkOutAt: null,
+      },
+      orderBy: { workDate: "desc" },
+    });
+    if (openAttendance) {
+      shouldRestoreWorking = true;
+    }
+  }
+
   // 4. Update employee current coordinates
   await prisma.employee.update({
     where: { id: employee.id },
@@ -156,8 +176,27 @@ export async function processLocationUpdate(
       lastLatitude: payload.latitude,
       lastLongitude: payload.longitude,
       lastLocationUpdate: recordedAt,
+      isLocationOff: false,
+      ...(shouldRestoreWorking ? { currentStatus: "WORKING" } : {}),
     },
   });
+
+  if (shouldRestoreWorking) {
+    await prisma.locationStatusEvent.create({
+      data: {
+        employeeId: employee.id,
+        state: "LOCATION_ON",
+        at: recordedAt,
+      },
+    });
+
+    broadcastEvent("employee.status.changed", {
+      employeeId: employee.id,
+      employeeName: employee.user.name || employee.employeeCode,
+      status: "WORKING",
+    });
+  }
+
 
   // 5. Evaluate against assigned geofences (with fallback to all active company geofences)
   let activeGeofences = (employee.geofenceAssignments || [])
@@ -329,17 +368,32 @@ export async function processBatchLocations(
   const ONE_DAY_MS = 24 * 60 * 60 * 1000;
   const receivedAt = new Date();
 
-  // Reject points more than 1 day in the future
-  const validPoints = updates.filter((u) => {
+  // Requirement 3: Separate accepted vs rejected points (invalid coords, invalid date, > 1 day in future)
+  const rejectedClientPointIds: string[] = [];
+  const validPoints: typeof updates = [];
+
+  for (const u of updates) {
     const recMs = new Date(u.recordedAt).getTime();
-    if (isNaN(recMs) || recMs > nowMs + ONE_DAY_MS) {
-      return false;
+    const isInvalidDate = isNaN(recMs);
+    const isFuture = recMs > nowMs + ONE_DAY_MS;
+    const isInvalidCoord = !isValidCoordinate(Number(u.latitude), Number(u.longitude));
+
+    if (isInvalidDate || isFuture || isInvalidCoord) {
+      if (u.clientPointId) {
+        rejectedClientPointIds.push(u.clientPointId);
+      }
+    } else {
+      validPoints.push(u);
     }
-    return isValidCoordinate(Number(u.latitude), Number(u.longitude));
-  });
+  }
 
   if (validPoints.length === 0) {
-    return { success: true, processedCount: 0, acceptedClientPointIds: [] };
+    return {
+      success: true,
+      processedCount: 0,
+      acceptedClientPointIds: [],
+      rejectedClientPointIds,
+    };
   }
 
   // Check for mock location flag in batch
@@ -395,6 +449,27 @@ export async function processBatchLocations(
   const newest = sorted[sorted.length - 1];
   const newestRecordedAt = new Date(newest.recordedAt);
 
+  // Requirement 4: Clear NO_SIGNAL if newest point is recent (within 10m) and open attendance exists
+  const isRecent = (nowMs - newestRecordedAt.getTime()) <= 10 * 60 * 1000 && newestRecordedAt.getTime() <= nowMs + 60000;
+  const isNewest = !employee.lastLocationUpdate || newestRecordedAt.getTime() >= employee.lastLocationUpdate.getTime();
+
+  let shouldRestoreWorking = false;
+  if (employee.currentStatus === "NO_SIGNAL" && isRecent && isNewest) {
+    const openAttendance = await prisma.attendance.findFirst({
+      where: {
+        employeeId: employee.id,
+        checkInAt: { not: null },
+        checkOutAt: null,
+      },
+      orderBy: { workDate: "desc" },
+    });
+    if (openAttendance) {
+      shouldRestoreWorking = true;
+    }
+  }
+
+  const finalStatus = shouldRestoreWorking ? "WORKING" : employee.currentStatus;
+
   // Update employee's last position from the newest point only
   await prisma.employee.update({
     where: { id: employee.id },
@@ -403,8 +478,25 @@ export async function processBatchLocations(
       lastLongitude: Number(newest.longitude),
       lastLocationUpdate: newestRecordedAt,
       isLocationOff: false,
+      ...(shouldRestoreWorking ? { currentStatus: "WORKING" } : {}),
     },
   });
+
+  if (shouldRestoreWorking) {
+    await prisma.locationStatusEvent.create({
+      data: {
+        employeeId: employee.id,
+        state: "LOCATION_ON",
+        at: newestRecordedAt,
+      },
+    });
+
+    broadcastEvent("employee.status.changed", {
+      employeeId: employee.id,
+      employeeName: employee.user.name || employee.employeeCode,
+      status: "WORKING",
+    });
+  }
 
   // Broadcast live location update for newest point
   const broadcastPayload = {
@@ -417,7 +509,7 @@ export async function processBatchLocations(
     accuracy: newest.accuracy,
     speed: newest.speed,
     heading: newest.heading,
-    status: employee.currentStatus,
+    status: finalStatus,
     recordedAt: newestRecordedAt.toISOString(),
   };
 
@@ -428,5 +520,7 @@ export async function processBatchLocations(
     success: true,
     processedCount: recordsToInsert.length,
     acceptedClientPointIds: recordsToInsert.map((r) => r.clientPointId),
+    rejectedClientPointIds,
   };
 }
+

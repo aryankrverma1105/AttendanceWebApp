@@ -238,6 +238,8 @@ export async function createAdminAccount(req: Request, res: Response) {
   return createEmployee(req, res);
 }
 
+export const createAdmin = createAdminAccount;
+
 /**
  * Deactivate or activate user account. Deactivating also revokes all sessions.
  */

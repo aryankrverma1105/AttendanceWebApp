@@ -24,7 +24,8 @@ import { Badge } from "../components/ui/badge";
 import { IconTile } from "../components/ui/icon-tile";
 import { BrandLogo } from "../components/ui/BrandLogo";
 import { onSyncStatusChange, triggerSync } from "../lib/sync";
-import { getOutboxStatus } from "../lib/outbox";
+import { getOutboxStatus, retryFailedItems } from "../lib/outbox";
+
 import { startLocationWatchdog } from "../lib/locationWatchdog";
 import { LocationOffBanner } from "../components/LocationOffBanner";
 import { TouchableOpacity } from "react-native";
@@ -56,9 +57,11 @@ export default function HomeScreen({ onGoTo }: HomeScreenProps) {
 
   const [syncStatus, setSyncStatus] = useState<{
     pendingCount: number;
+    failedCount: number;
     lastSyncAt: number | null;
     isSyncing: boolean;
-  }>({ pendingCount: 0, lastSyncAt: null, isSyncing: false });
+  }>({ pendingCount: 0, failedCount: 0, lastSyncAt: null, isSyncing: false });
+
 
   const employeeRef = useRef<Employee | null>(null);
   useEffect(() => {
@@ -317,7 +320,32 @@ export default function HomeScreen({ onGoTo }: HomeScreenProps) {
             )}
           </TouchableOpacity>
         </View>
+
+        {/* Failed items section (Requirement 2 & 3) */}
+        {syncStatus.failedCount > 0 && (
+          <View className="mt-3 pt-3 border-t border-[#F3E8C8] flex-row items-center justify-between">
+            <View className="flex-row items-center gap-2">
+              <Ionicons name="alert-circle-outline" size={16} color="#DC2626" />
+              <Text className="text-[12px] font-semibold text-[#DC2626]">
+                {syncStatus.failedCount} Failed {syncStatus.failedCount === 1 ? "Item" : "Items"}
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={async () => {
+                await retryFailedItems();
+                triggerSync();
+              }}
+              disabled={syncStatus.isSyncing}
+              activeOpacity={0.8}
+              className="bg-[#FEE2E2] border border-[#FECACA] px-2.5 py-1 rounded-lg flex-row items-center gap-1"
+            >
+              <Ionicons name="refresh-outline" size={13} color="#DC2626" />
+              <Text className="text-[11px] font-bold text-[#DC2626]">Retry failed</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </Card>
+
 
       {/* Primary Identity Card */}
       <Card>

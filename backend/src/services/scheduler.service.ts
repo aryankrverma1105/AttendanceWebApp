@@ -64,9 +64,12 @@ export async function runAutoCheckoutJob(): Promise<number> {
       workingMinutes = calculateWorkingMinutes(checkInAt, checkOutAt);
     }
 
-    // Update attendance record
-    await prisma.attendance.update({
-      where: { id: record.id },
+    // Race-safe update: only close if checkOutAt is STILL null (Requirement 1)
+    const updateResult = await prisma.attendance.updateMany({
+      where: {
+        id: record.id,
+        checkOutAt: null,
+      },
       data: {
         checkOutAt,
         checkOutType: "AUTO_9PM",
@@ -75,6 +78,12 @@ export async function runAutoCheckoutJob(): Promise<number> {
         notes,
       },
     });
+
+    if (updateResult.count === 0) {
+      // Record was already closed concurrently (e.g. by manual checkout)
+      continue;
+    }
+
 
     // Update employee status
     await prisma.employee.update({
@@ -169,6 +178,16 @@ export async function runNoSignalWatchdogJob(): Promise<number> {
   });
 
   for (const emp of stalledEmployees) {
+    // Requirement 4: Skip NO_SIGNAL alert if latest status event is LOCATION_OFF (admin was already notified)
+    const latestEvent = await prisma.locationStatusEvent.findFirst({
+      where: { employeeId: emp.id },
+      orderBy: { at: "desc" },
+    });
+
+    if (latestEvent?.state === "LOCATION_OFF") {
+      continue;
+    }
+
     const now = new Date();
 
     // 1. Update employee status to NO_SIGNAL
@@ -176,6 +195,7 @@ export async function runNoSignalWatchdogJob(): Promise<number> {
       where: { id: emp.id },
       data: { currentStatus: "NO_SIGNAL" },
     });
+
 
     // 2. Record status event
     await prisma.locationStatusEvent.create({

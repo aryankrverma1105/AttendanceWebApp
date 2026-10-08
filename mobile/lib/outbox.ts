@@ -12,6 +12,8 @@
 
 import * as SQLite from 'expo-sqlite';
 
+export const MAX_EVENT_RETRIES = 8;
+
 export interface PendingEvent {
   id: string; // clientEventId (UUID)
   eventType: 'CHECK_IN' | 'CHECK_OUT' | 'LOCATION_STATUS';
@@ -62,6 +64,28 @@ export async function getOutboxDb(): Promise<any> {
         createdAt INTEGER NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS failed_events (
+        id TEXT PRIMARY KEY,
+        eventType TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        errorMessage TEXT,
+        failedAt INTEGER NOT NULL,
+        retryCount INTEGER NOT NULL DEFAULT 0
+      );
+
+      CREATE TABLE IF NOT EXISTS failed_locations (
+        id TEXT PRIMARY KEY,
+        latitude REAL NOT NULL,
+        longitude REAL NOT NULL,
+        accuracy REAL,
+        speed REAL,
+        heading REAL,
+        isMock INTEGER NOT NULL DEFAULT 0,
+        recordedAt TEXT NOT NULL,
+        errorMessage TEXT,
+        failedAt INTEGER NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS sync_metadata (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -73,6 +97,7 @@ export async function getOutboxDb(): Promise<any> {
     throw err;
   }
 }
+
 
 // ─── Pending Events ──────────────────────────────────────────────────────────
 
@@ -108,6 +133,22 @@ export async function removePendingEvent(id: string): Promise<void> {
 export async function incrementEventRetry(id: string): Promise<void> {
   const db = await getOutboxDb();
   await db.runAsync(`UPDATE pending_events SET retryCount = retryCount + 1 WHERE id = ?;`, [id]);
+}
+
+export async function moveToFailedEvents(id: string, errorMessage?: string): Promise<void> {
+  const db = await getOutboxDb();
+  const event: any = await db.getFirstAsync(
+    `SELECT id, eventType, payload, retryCount FROM pending_events WHERE id = ?;`,
+    [id]
+  );
+  if (event) {
+    await db.runAsync(
+      `INSERT OR REPLACE INTO failed_events (id, eventType, payload, errorMessage, failedAt, retryCount)
+       VALUES (?, ?, ?, ?, ?, ?);`,
+      [event.id, event.eventType, event.payload, errorMessage || null, Date.now(), event.retryCount]
+    );
+    await db.runAsync(`DELETE FROM pending_events WHERE id = ?;`, [id]);
+  }
 }
 
 // ─── Pending Locations ───────────────────────────────────────────────────────
@@ -166,12 +207,85 @@ export async function removePendingLocations(ids: string[]): Promise<void> {
   await db.runAsync(`DELETE FROM pending_locations WHERE id IN (${placeholders});`, ids);
 }
 
+export async function moveToFailedLocations(points: PendingLocation[], errorMessage?: string): Promise<void> {
+  if (points.length === 0) return;
+  const db = await getOutboxDb();
+  const now = Date.now();
+  for (const p of points) {
+    await db.runAsync(
+      `INSERT OR REPLACE INTO failed_locations 
+       (id, latitude, longitude, accuracy, speed, heading, isMock, recordedAt, errorMessage, failedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      [
+        p.id,
+        p.latitude,
+        p.longitude,
+        p.accuracy ?? null,
+        p.speed ?? null,
+        p.heading ?? null,
+        p.isMock ? 1 : 0,
+        p.recordedAt,
+        errorMessage || null,
+        now,
+      ]
+    );
+  }
+  const ids = points.map((p) => p.id);
+  await removePendingLocations(ids);
+}
+
+// ─── Retry Failed Items (Requirement 2 & 3) ──────────────────────────────────
+
+export async function retryFailedItems(): Promise<{ requeuedEvents: number; requeuedLocations: number }> {
+  const db = await getOutboxDb();
+  const failedEvs: any[] = await db.getAllAsync(`SELECT * FROM failed_events;`);
+  const failedLocs: any[] = await db.getAllAsync(`SELECT * FROM failed_locations;`);
+
+  const now = Date.now();
+  for (const ev of failedEvs) {
+    await db.runAsync(
+      `INSERT OR REPLACE INTO pending_events (id, eventType, payload, createdAt, retryCount)
+       VALUES (?, ?, ?, ?, 0);`,
+      [ev.id, ev.eventType, ev.payload, now]
+    );
+  }
+  await db.runAsync(`DELETE FROM failed_events;`);
+
+  for (const loc of failedLocs) {
+    await db.runAsync(
+      `INSERT OR REPLACE INTO pending_locations 
+       (id, latitude, longitude, accuracy, speed, heading, isMock, recordedAt, createdAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      [
+        loc.id,
+        loc.latitude,
+        loc.longitude,
+        loc.accuracy,
+        loc.speed,
+        loc.heading,
+        loc.isMock,
+        loc.recordedAt,
+        now,
+      ]
+    );
+  }
+  await db.runAsync(`DELETE FROM failed_locations;`);
+
+  return {
+    requeuedEvents: failedEvs.length,
+    requeuedLocations: failedLocs.length,
+  };
+}
+
 // ─── Outbox Status & Metadata ────────────────────────────────────────────────
 
 export async function getOutboxStatus(): Promise<{
   pendingEvents: number;
   pendingLocations: number;
   totalPending: number;
+  failedEvents: number;
+  failedLocations: number;
+  totalFailed: number;
   lastSyncAt: number | null;
   lastCheckInState: 'CHECKED_IN' | 'CHECKED_OUT' | null;
 }> {
@@ -180,6 +294,8 @@ export async function getOutboxStatus(): Promise<{
 
     const eventCountRow: any = await db.getFirstAsync(`SELECT COUNT(*) as count FROM pending_events;`);
     const locCountRow: any = await db.getFirstAsync(`SELECT COUNT(*) as count FROM pending_locations;`);
+    const failedEventRow: any = await db.getFirstAsync(`SELECT COUNT(*) as count FROM failed_events;`);
+    const failedLocRow: any = await db.getFirstAsync(`SELECT COUNT(*) as count FROM failed_locations;`);
 
     const syncMetaRow: any = await db.getFirstAsync(
       `SELECT value FROM sync_metadata WHERE key = 'lastSyncAt';`
@@ -190,6 +306,8 @@ export async function getOutboxStatus(): Promise<{
 
     const pendingEvents = Number(eventCountRow?.count || 0);
     const pendingLocations = Number(locCountRow?.count || 0);
+    const failedEvents = Number(failedEventRow?.count || 0);
+    const failedLocations = Number(failedLocRow?.count || 0);
     const lastSyncAt = syncMetaRow?.value ? Number(syncMetaRow.value) : null;
     const lastCheckInState = stateMetaRow?.value || null;
 
@@ -197,6 +315,9 @@ export async function getOutboxStatus(): Promise<{
       pendingEvents,
       pendingLocations,
       totalPending: pendingEvents + pendingLocations,
+      failedEvents,
+      failedLocations,
+      totalFailed: failedEvents + failedLocations,
       lastSyncAt,
       lastCheckInState,
     };
@@ -206,11 +327,15 @@ export async function getOutboxStatus(): Promise<{
       pendingEvents: 0,
       pendingLocations: 0,
       totalPending: 0,
+      failedEvents: 0,
+      failedLocations: 0,
+      totalFailed: 0,
       lastSyncAt: null,
       lastCheckInState: null,
     };
   }
 }
+
 
 export async function setLastSyncTimestamp(timestamp: number): Promise<void> {
   try {

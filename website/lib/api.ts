@@ -235,6 +235,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ email, password, deviceId: getDeviceId() }),
     }),
+  demoLogin: (role: string) =>
+    fetchApi("/auth/demo-login", {
+      method: "POST",
+      body: JSON.stringify({ role, deviceId: getDeviceId() }),
+    }),
+  simulateMovement: (employeeId: string, action: string) =>
+    fetchApi("/simulation/movement", {
+      method: "POST",
+      body: JSON.stringify({ employeeId, action }),
+    }),
   logout: (refreshToken: string) =>
     fetchApi("/auth/logout", {
       method: "POST",

@@ -161,8 +161,11 @@ model Attendance {
   isLateArrival    Boolean   @default(false)
   isEarlyDeparture Boolean   @default(false)
   notes            String?
+  clockSkewSeconds Int?
+  receivedAt       DateTime  @default(now())
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
+
 
   @@unique([employeeId, workDate])
   @@index([workDate, employeeId])
