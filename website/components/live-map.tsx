@@ -47,11 +47,9 @@ export function LiveMap({ geofences, employees, selectedEmployeeId, onSelectEmpl
     L.control.zoom({ position: "bottomright" }).addTo(map);
 
     // Carto Voyager map tile layer with authenticated API key
-    const cartoKey = process.env.NEXT_PUBLIC_CARTO_API_KEY || "cb1_4e5f_1_4f7d31c7b00835a4b92885e3";
-    L.tileLayer(`https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=${cartoKey}`, {
+    L.tileLayer("https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=cb1_4e5f_1_4f7d31c7b00835a4b92885e3", {
       attribution: '&copy; <a href="https://carto.com/">CARTO</a>, OpenStreetMap',
       maxZoom: 19,
-      subdomains: "abcd",
     }).addTo(map);
 
     mapInstanceRef.current = map;
