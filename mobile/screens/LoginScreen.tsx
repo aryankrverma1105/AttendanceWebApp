@@ -24,9 +24,10 @@ export default function LoginScreen({ onLogin }: LoginScreenProps) {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isConflict, setIsConflict] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  const handleLogin = async () => {
+  const handleLogin = async (force = false) => {
     if (!email.trim() || !password.trim()) {
       setError('Please enter your work email and password.');
       return;
@@ -34,14 +35,23 @@ export default function LoginScreen({ onLogin }: LoginScreenProps) {
     setLoading(true);
     setError(null);
     try {
-      const res = await mobileApi.login(email.trim(), password.trim());
+      const res = await mobileApi.login(email.trim(), password.trim(), force);
       if (!res.success || !res.token) {
         throw new Error((res as any).message || 'Invalid credentials. Please try again.');
       }
+      setIsConflict(false);
       await storeUser(res.token, res.user, res.refreshToken);
       onLogin();
     } catch (err: any) {
-      setError(err.message ?? 'Login failed. Check your network connection.');
+      const msg = err.message ?? 'Login failed. Check your network connection.';
+      setError(msg);
+      if (
+        err.data?.code === 'DEVICE_CONFLICT' ||
+        msg.toLowerCase().includes('already signed in') ||
+        msg.toLowerCase().includes('another device')
+      ) {
+        setIsConflict(true);
+      }
     } finally {
       setLoading(false);
     }
@@ -122,11 +132,24 @@ export default function LoginScreen({ onLogin }: LoginScreenProps) {
             </View>
           )}
 
+          {/* Force Disconnect Button */}
+          {isConflict && (
+            <TouchableOpacity
+              onPress={() => handleLogin(true)}
+              disabled={loading}
+              activeOpacity={0.8}
+              className="rounded-xl bg-[#D97706] p-3 items-center justify-center shadow-sm">
+              <Text className="text-white text-[13px] font-bold">
+                Sign In &amp; Disconnect Other Session
+              </Text>
+            </TouchableOpacity>
+          )}
+
           {/* Primary Action Button */}
           <Button
             variant="default"
             size="default"
-            onPress={handleLogin}
+            onPress={() => handleLogin(false)}
             loading={loading}
             className="mt-1 bg-[#F59E0B] border-transparent"
             textClassName="text-[#1F2937] font-bold">

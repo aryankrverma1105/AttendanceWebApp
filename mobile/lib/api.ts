@@ -1,5 +1,5 @@
 import * as SecureStore from "expo-secure-store";
-import { getApiBase, apiRequest, type UserRole, type StoredUser } from "./auth";
+import { getApiBase, apiRequest, getDeviceId, type UserRole, type StoredUser } from "./auth";
 
 // Re-export auth types for convenience
 export type { UserRole, StoredUser };
@@ -111,11 +111,20 @@ async function authReq<T = any>(
 
 export const mobileApi = {
   // Auth
-  login: (email: string, password: string) =>
-    apiRequest<{ success: boolean; token: string; refreshToken?: string; user: StoredUser }>("/auth/login", {
+  login: async (email: string, password: string, force = false) => {
+    const deviceId = await getDeviceId();
+    return apiRequest<{
+      success: boolean;
+      token: string;
+      refreshToken?: string;
+      user: StoredUser;
+      code?: string;
+      message?: string;
+    }>("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
-    }),
+      body: JSON.stringify({ email: email.trim().toLowerCase(), password, deviceId, force }),
+    });
+  },
 
   getMe: () =>
     authReq<{ success: boolean; user: any }>("/auth/me"),
